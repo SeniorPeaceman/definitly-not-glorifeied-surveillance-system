@@ -14,23 +14,22 @@ export function createFaceLandmarker(vision, maxFaces) {
   });
 }
 
-// Look up a named expression score, returning zero if it is unavailable.
-function getBlendshapeScore(blendshapes, name) {
-  return blendshapes.categories.find((category) => category.categoryName === name)?.score ?? 0;
-}
+export function getFaceBounds(landmarks) {
+  const xs = landmarks.map(({ x }) => x);
+  const ys = landmarks.map(({ y }) => y);
+  const left = Math.min(...xs);
+  const top = Math.min(...ys);
+  const right = Math.max(...xs);
+  const bottom = Math.max(...ys);
 
-// Turn selected face blendshapes into weighted cues for the live score display.
-export function classifyFace(blendshapes) {
-  const jawOpen = getBlendshapeScore(blendshapes, "jawOpen");
-  const browDown = Math.max(
-    getBlendshapeScore(blendshapes, "browDownLeft"),
-    getBlendshapeScore(blendshapes, "browDownRight"),
-  );
-  const cues = [];
-
-  if (jawOpen >= 0.5) cues.push({ weight: "#weight-open-mouth", label: "Wide open mouth" });
-  if (browDown >= 0.5) cues.push({ weight: "#weight-lowered-brows", label: "Lowered brows (frown proxy)" });
-  return cues;
+  return {
+    left,
+    top,
+    right,
+    bottom,
+    centerX: (left + right) / 2,
+    centerY: (top + bottom) / 2,
+  };
 }
 
 // Draw facial tessellation and a padded bounding box on the tracking canvas.
@@ -48,21 +47,20 @@ export function drawFaceMesh(result, video, canvas, context, drawingUtils) {
       { color: "#00ff00", lineWidth: 0.5 },
     );
 
-    const xs = landmarks.map(({ x }) => x * canvas.width);
-    const ys = landmarks.map(({ y }) => y * canvas.height);
-    const left = Math.min(...xs);
-    const top = Math.min(...ys);
-    const right = Math.max(...xs);
-    const bottom = Math.max(...ys);
-    const padding = Math.max(right - left, bottom - top) * 0.05;
+    const bounds = getFaceBounds(landmarks);
+    const left = bounds.left * canvas.width;
+    const top = bounds.top * canvas.height;
+    const width = (bounds.right - bounds.left) * canvas.width;
+    const height = (bounds.bottom - bounds.top) * canvas.height;
+    const padding = Math.max(width, height) * 0.05;
 
     context.strokeStyle = "#ff0000";
     context.lineWidth = Math.max(2, canvas.width / 320);
     context.strokeRect(
       left - padding,
       top - padding,
-      right - left + padding * 2,
-      bottom - top + padding * 2,
+      width + padding * 2,
+      height + padding * 2,
     );
   }
 }

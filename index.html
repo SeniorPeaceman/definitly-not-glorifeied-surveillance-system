@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Face and Hand Tracking</title>
+    <title>Face and Gesture Game</title>
     <style>
       #camera-stage {
         position: relative;
@@ -24,6 +24,22 @@
         pointer-events: none;
       }
 
+      #face-labels {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+      }
+
+      .face-label {
+        position: absolute;
+        padding: 2px 6px;
+        border: 1px solid #fff;
+        background: #b32432;
+        color: #fff;
+        font: 600 14px/1.2 sans-serif;
+        transform: translateY(-100%);
+      }
+
       #camera,
       #tracking-overlay {
         transform: scaleX(-1);
@@ -34,55 +50,43 @@
   <body>
       <h1>hello world</h1>
     <main>
-      <h1>Face and Hand Tracking</h1>
+      <h1>Face and Gesture Game</h1>
       <p>
-        Tracking runs in your browser. Video, images, and tracking results are
-        not saved.
+        Tracking runs in your browser. Face tracking and points reset when the
+        camera stops; only point settings and the next number are saved.
       </p>
 
       <button id="start-button" type="button">Start camera</button>
       <button id="stop-button" type="button" disabled>Stop camera</button>
       <p id="status" role="status" aria-live="polite">Camera stopped.</p>
 
-      <h3>Live hand-tracking scores</h3>
-      <ul id="tracked-hand-list" aria-label="Per-hand gesture scores"></ul>
-
-      <h3>Per-face visible-cue scores (current frame)</h3>
-      <p>These scores reflect configured facial cues only; face numbers are not persistent identities.</p>
-      <ul id="tracked-face-list" aria-label="Current-frame per-face visible-cue scores"></ul>
-
-      <p>Highest live score: <output id="live-score">No faces or hands detected</output> / 1</p>
+      <h3>Game points</h3>
+      <p>Face numbers are temporary camera-session labels, not identities.</p>
+      <ol id="tracked-face-list" aria-label="Per-face session game points"></ol>
 
       <div id="camera-stage">
         <video id="camera" autoplay muted playsinline webkit-playsinline></video>
-        <canvas id="tracking-overlay" aria-label="Live face and hand tracking overlay"></canvas>
+        <canvas id="tracking-overlay" aria-label="Live face, hand, and pose tracking overlay"></canvas>
+        <div id="face-labels" aria-hidden="true"></div>
       </div>
 
-      <h3>Hand cue weights</h3>
-      <label for="weight-fist">Fist weight (0–1)</label>
-      <input id="weight-fist" type="range" min="0" max="1" step="0.01" value="0.25">
-      <output id="weight-fist-value" for="weight-fist">0.25</output><br>
-      <label for="weight-raised-fist">Raised fist proxy weight (0–1)</label>
-      <input id="weight-raised-fist" type="range" min="0" max="1" step="0.01" value="0.5">
-      <output id="weight-raised-fist-value" for="weight-raised-fist">0.50</output><br>
-      <label for="weight-middle-finger">Middle finger weight (0–1)</label>
-      <input id="weight-middle-finger" type="range" min="0" max="1" step="0.01" value="0.35">
-      <output id="weight-middle-finger-value" for="weight-middle-finger">0.35</output>
-
-      <h3>Face cue weights</h3>
-      <label for="weight-open-mouth">Wide open mouth weight (0–1)</label>
-      <input id="weight-open-mouth" type="range" min="0" max="1" step="0.01" value="0.35">
-      <output id="weight-open-mouth-value" for="weight-open-mouth">0.35</output><br>
-      <label for="weight-lowered-brows">Lowered brows (frown proxy) weight (0–1)</label>
-      <input id="weight-lowered-brows" type="range" min="0" max="1" step="0.01" value="0.3">
-      <output id="weight-lowered-brows-value" for="weight-lowered-brows">0.30</output><br>
-
-      <label for="operator-bias">Operator bias (0–1)</label>
-      <input id="operator-bias" type="range" min="0" max="1" step="0.01" value="0">
-      <output id="operator-bias-value" for="operator-bias">0.00</output>
+      <h3>Points per game cue</h3>
+      <label for="points-fist">Fist</label>
+      <input id="points-fist" type="range" min="0" max="10" step="1" value="1">
+      <output id="points-fist-value" for="points-fist">1 pts</output><br>
+      <label for="points-raised-fist">Raised fist</label>
+      <input id="points-raised-fist" type="range" min="0" max="10" step="1" value="3">
+      <output id="points-raised-fist-value" for="points-raised-fist">3 pts</output><br>
+      <label for="points-middle-finger">Raised middle finger</label>
+      <input id="points-middle-finger" type="range" min="0" max="10" step="1" value="2">
+      <output id="points-middle-finger-value" for="points-middle-finger">2 pts</output><br>
+      <label for="points-both-arms-raised">Both arms raised</label>
+      <input id="points-both-arms-raised" type="range" min="0" max="10" step="1" value="2">
+      <output id="points-both-arms-raised-value" for="points-both-arms-raised">2 pts</output>
 
       <p>Faces currently detected: <output id="face-count">0</output></p>
       <p>Hands currently detected: <output id="hand-count">0</output></p>
+      <p>Poses currently detected: <output id="pose-count">0</output></p>
     </main>
   </body>
 </html>
