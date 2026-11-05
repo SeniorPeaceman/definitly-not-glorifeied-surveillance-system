@@ -6,17 +6,17 @@ import {
   createFaceLandmarker,
   drawFaceMesh,
   getFaceBounds,
-} from "./face-tracking.js";
+} from "./face-tracking.js?v=2";
 import {
   classifyGesture,
   createHandLandmarker,
   drawHands,
-} from "./hand-tracking.js";
+} from "./hand-tracking.js?v=2";
 import {
   classifyPose,
   createPoseLandmarker,
   drawPose,
-} from "./pose-tracking.js";
+} from "./pose-tracking.js?v=2";
 
 // Configure model limits and the tracking update rate.
 const MAX_FACES = 5;
@@ -165,7 +165,7 @@ function matchPosesToFaces(currentFaces, poses) {
       );
       if (distance <= 0.2) candidates.push({ faceIndex, poseIndex, distance });
     });
-  }
+  });
   candidates.sort((first, second) => first.distance - second.distance);
 
   const poseByFace = new Map();
