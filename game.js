@@ -33,13 +33,13 @@ const WASM_URL =
 
 // Connect each detectable cue to its slider, display label, and default points.
 const CUES = [
-  { id: "fist", label: "Fist", input: "points-fist", defaultPoints: 2 },
-  { id: "raised-fist", label: "Raised fist", input: "points-raised-fist", defaultPoints: 3 },
-  { id: "middle-finger", label: "Middle finger", input: "points-middle-finger", defaultPoints: 5 },
-  { id: "open-mouth", label: "Open mouth", input: "points-open-mouth", defaultPoints: 1 },
-  { id: "lowered-brows", label: "Lowered brows", input: "points-lowered-brows", defaultPoints: 1 },
-  { id: "both-arms-raised", label: "Both arms raised", input: "points-both-arms-raised", defaultPoints: 2 },
-  { id: "arms-spread", label: "Arms spread", input: "points-arms-spread", defaultPoints: 2 },
+  { id: "fist", label: "Fist", input: "points-fist" },
+  { id: "raised-fist", label: "Raised fist", input: "points-raised-fist" },
+  { id: "middle-finger", label: "Middle finger", input: "points-middle-finger" },
+  { id: "open-mouth", label: "Open mouth", input: "points-open-mouth" },
+  { id: "lowered-brows", label: "Lowered brows", input: "points-lowered-brows" },
+  { id: "both-arms-raised", label: "Both arms raised", input: "points-both-arms-raised" },
+  { id: "arms-spread", label: "Arms spread", input: "points-arms-spread" },
 ];
 const cueById = new Map(CUES.map((cue) => [cue.id, cue]));
 
@@ -73,6 +73,7 @@ const faceScores = new Map(savedGame.faceScores.map((score) => [score.id, score]
 let unassignedScores = savedGame.unassignedScores;
 // Keep active camera and face-track state in memory; only the scoreboard is persisted.
 let nextFaceId = savedGame.nextFaceId;
+let storageEnabled = true;
 let faceLandmarker;
 let handLandmarker;
 let poseLandmarker;
@@ -84,7 +85,7 @@ const faceTracks = new Map();
 // Cache the controls and output elements used by the game page.
 const startButton = document.querySelector("#start-button");
 const stopButton = document.querySelector("#stop-button");
-const clearButton = document.querySelector("#clear-scores-button");
+const deleteSavedDataButton = document.querySelector("#delete-saved-data-button");
 const statusElement = document.querySelector("#status");
 const video = document.querySelector("#camera");
 const overlay = document.querySelector("#tracking-overlay");
@@ -101,10 +102,12 @@ function setStatus(message) {
   statusElement.textContent = message;
 }
 
-// Persist face scores, unassigned totals, numbering state, and cue settings.
+// Persist the scoreboard and cue settings unless the user deleted saved data this session.
 function saveGame() {
+  if (!storageEnabled) return;
+
   try {
-    const savedFaceScores = [...faceScores.values()].map(({ id, points, lastEvent }) => ({ id, points, lastEvent }));
+    const savedFaceScores = [...faceScores.values()];
     const savedData = { nextFaceId, faceScores: savedFaceScores, unassignedScores };
     savedData.settings = Object.fromEntries(
       CUES.map(({ id, input }) => [id, Number(document.querySelector(`#${input}`).value)]),
@@ -460,20 +463,16 @@ function stopCamera(message = "Camera off. Scores stay saved on this device.") {
   updateScoreboard();
 }
 
-// Zero the saved point totals without deleting face numbers or cue settings.
-function clearScores() {
-  for (const faceScore of faceScores.values()) {
-    faceScore.points = 0;
-    faceScore.lastEvent = "Points cleared";
+// Delete this app's stored copies without changing the in-memory scoreboard.
+function deleteSavedData() {
+  try {
+    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(LEGACY_STORAGE_KEY);
+    storageEnabled = false;
+    setStatus("Saved data deleted. Current scores remain until reload and will not be saved again.");
+  } catch {
+    setStatus("Could not delete saved data from browser storage.");
   }
-  unassignedScores = [];
-  for (const track of faceTracks.values()) {
-    track.activeCues.clear();
-    track.lastAwardAt.clear();
-  }
-  saveGame();
-  updateScoreboard();
-  setStatus("Points cleared. Face numbers are kept for this saved game.");
 }
 
 // Restore saved slider choices when present; defaults remain unsaved on initial load.
@@ -487,7 +486,7 @@ for (const cue of CUES) {
 // Connect page actions and initialize the scoreboard without rewriting cleared settings.
 startButton.addEventListener("click", startCamera);
 stopButton.addEventListener("click", () => stopCamera());
-clearButton.addEventListener("click", clearScores);
+deleteSavedDataButton.addEventListener("click", deleteSavedData);
 window.addEventListener("pagehide", () => stopCamera("Camera closed."));
 
 updatePointControls(false);
