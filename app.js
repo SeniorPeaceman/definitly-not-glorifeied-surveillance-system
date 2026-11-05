@@ -54,6 +54,7 @@ const pointControls = [
 let faceLandmarker;
 let handLandmarker;
 let poseLandmarker;
+let poseTrackingError;
 const drawingUtils = new DrawingUtils(meshContext);
 let cameraStream;
 let animationFrameId;
@@ -284,6 +285,18 @@ function setStatus(message) {
   statusElement.textContent = message;
 }
 
+function disablePoseTracking(error) {
+  poseTrackingError = error.message;
+  try {
+    poseLandmarker?.close();
+  } catch {
+    // Keep face and hand tracking available even if pose cleanup fails.
+  }
+  poseLandmarker = undefined;
+  poseCountElement.value = "0";
+  setStatus(`Camera running. Face and hand tracking are live. Pose tracking unavailable: ${poseTrackingError}`);
+}
+
 // Run face, hand, and pose inference and update this session's game board.
 function detectFrame() {
   if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
@@ -301,7 +314,14 @@ function detectFrame() {
   try {
     const faceResult = faceLandmarker.detectForVideo(video, now);
     const handResult = handLandmarker.detectForVideo(video, now);
-    const poseResult = poseLandmarker.detectForVideo(video, now);
+    let poseResult = { landmarks: [] };
+    if (poseLandmarker) {
+      try {
+        poseResult = poseLandmarker.detectForVideo(video, now);
+      } catch (error) {
+        disablePoseTracking(error);
+      }
+    }
     faceCountElement.value = String(faceResult.faceLandmarks.length);
     handCountElement.value = String(handResult.landmarks.length);
     poseCountElement.value = String(poseResult.landmarks.length);
@@ -309,7 +329,13 @@ function detectFrame() {
     updateGameScores(currentFaces, poseResult, handResult, now);
     renderFaceLabels(currentFaces);
     drawFaceMesh(faceResult, video, meshCanvas, meshContext, drawingUtils);
-    drawPose(poseResult, drawingUtils);
+    if (poseLandmarker) {
+      try {
+        drawPose(poseResult, drawingUtils);
+      } catch (error) {
+        disablePoseTracking(error);
+      }
+    }
     drawHands(handResult, drawingUtils);
 
     if (!cameraStream) return;
@@ -325,6 +351,7 @@ function detectFrame() {
 // Request camera access, initialize any missing models, and start frame processing.
 async function startCamera() {
   startButton.disabled = true;
+  poseTrackingError = undefined;
   setStatus("Requesting camera access…");
 
   try {
@@ -356,12 +383,18 @@ async function startCamera() {
         handLandmarker = await createHandLandmarker(vision, MAX_HANDS);
       }
       if (!poseLandmarker) {
-        poseLandmarker = await createPoseLandmarker(vision, MAX_FACES);
+        try {
+          poseLandmarker = await createPoseLandmarker(vision, MAX_FACES);
+        } catch (error) {
+          poseTrackingError = error.message;
+        }
       }
     }
     stopButton.disabled = false;
     lastInferenceAt = 0;
-    setStatus("Camera running. Face numbers and points last for this camera session.");
+    setStatus(poseTrackingError
+      ? `Camera running. Face and hand tracking are live. Pose tracking unavailable: ${poseTrackingError}`
+      : "Camera running. Face numbers and points last for this camera session.");
     animationFrameId = requestAnimationFrame(detectFrame);
   } catch (error) {
     stopCamera();
