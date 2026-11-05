@@ -24,7 +24,7 @@ const MAX_FACES = 5;
 const MAX_HANDS = 4;
 const MAX_POSES = 5;
 const INFERENCE_INTERVAL_MS = 1000 / 12;
-const TRACK_TIMEOUT_MS = 2200;
+const TRACK_TIMEOUT_MS = 3500;
 const CUE_COOLDOWN_MS = 1200;
 const STORAGE_KEY = "definitly-not-glorified-surveillance-system-v1";
 const LEGACY_STORAGE_KEY = "cue-carnival-game-v1";
@@ -206,52 +206,132 @@ function updatePointControls(save = true) {
   if (save) saveGame();
 }
 
-// Match each frame's detected faces to recent tracks, assigning new saved IDs when needed.
+// Find the lowest-cost one-to-one column for every detection using the Hungarian method.
+function assignMinimumCostPairs(costMatrix) {
+  const rowCount = costMatrix.length;
+  if (rowCount === 0) return [];
+
+  const columnCount = costMatrix[0].length;
+  const rowPotentials = new Array(rowCount + 1).fill(0);
+  const columnPotentials = new Array(columnCount + 1).fill(0);
+  const columnOwners = new Array(columnCount + 1).fill(0);
+  const previousColumns = new Array(columnCount + 1).fill(0);
+
+  for (let row = 1; row <= rowCount; row += 1) {
+    columnOwners[0] = row;
+    let currentColumn = 0;
+    const minimumCosts = new Array(columnCount + 1).fill(Infinity);
+    const usedColumns = new Array(columnCount + 1).fill(false);
+
+    do {
+      usedColumns[currentColumn] = true;
+      const currentRow = columnOwners[currentColumn];
+      let nextColumn = 0;
+      let costDelta = Infinity;
+
+      for (let column = 1; column <= columnCount; column += 1) {
+        if (usedColumns[column]) continue;
+        const reducedCost = costMatrix[currentRow - 1][column - 1]
+          - rowPotentials[currentRow]
+          - columnPotentials[column];
+        if (reducedCost < minimumCosts[column]) {
+          minimumCosts[column] = reducedCost;
+          previousColumns[column] = currentColumn;
+        }
+        if (minimumCosts[column] < costDelta) {
+          costDelta = minimumCosts[column];
+          nextColumn = column;
+        }
+      }
+
+      for (let column = 0; column <= columnCount; column += 1) {
+        if (usedColumns[column]) {
+          rowPotentials[columnOwners[column]] += costDelta;
+          columnPotentials[column] -= costDelta;
+        } else {
+          minimumCosts[column] -= costDelta;
+        }
+      }
+      currentColumn = nextColumn;
+    } while (columnOwners[currentColumn] !== 0);
+
+    do {
+      const previousColumn = previousColumns[currentColumn];
+      columnOwners[currentColumn] = columnOwners[previousColumn];
+      currentColumn = previousColumn;
+    } while (currentColumn !== 0);
+  }
+
+  const assignments = new Array(rowCount).fill(-1);
+  for (let column = 1; column <= columnCount; column += 1) {
+    const row = columnOwners[column];
+    if (row !== 0) assignments[row - 1] = column - 1;
+  }
+  return assignments;
+}
+
+// Match detections to predicted tracks using a global one-to-one set of candidate pairs.
 function matchFaces(faceLandmarks, now) {
   for (const [id, track] of faceTracks) {
     if (now - track.lastSeen >= TRACK_TIMEOUT_MS) faceTracks.delete(id);
   }
-  const availableTracks = new Set(
-    [...faceTracks.values()].filter((track) => now - track.lastSeen < TRACK_TIMEOUT_MS),
-  );
+  const detections = faceLandmarks.map(getFaceBounds);
+  const tracks = [...faceTracks.values()];
+  const unmatchedCost = 1.05;
+  const invalidCost = 100;
+  const costMatrix = detections.map((bounds) => {
+    const trackCosts = tracks.map((track) => {
+      const elapsed = Math.min((now - track.lastSeen) / 1000, 0.75);
+      const predictedX = track.centerX + track.velocityX * elapsed;
+      const predictedY = track.centerY + track.velocityY * elapsed;
+      const distance = Math.hypot(bounds.centerX - predictedX, bounds.centerY - predictedY);
+      const speed = Math.hypot(track.velocityX, track.velocityY);
+      const distanceLimit = Math.max(0.08, (bounds.width + track.width) * 0.6)
+        + Math.min(0.12, speed * elapsed * 0.4);
+      if (distance > distanceLimit) return invalidCost;
 
-  return faceLandmarks.map((landmarks) => {
-    const bounds = getFaceBounds(landmarks);
-    let bestTrack;
-    let bestCost = Infinity;
+      const widthChange = Math.abs(Math.log((bounds.width + 0.01) / (track.width + 0.01)));
+      const heightChange = Math.abs(Math.log((bounds.height + 0.01) / (track.height + 0.01)));
+      return (distance / distanceLimit) * 0.75
+        + Math.min(1, (widthChange + heightChange) * 0.4) * 0.25;
+    });
+    return [...trackCosts, ...new Array(detections.length).fill(unmatchedCost)];
+  });
+  const assignments = assignMinimumCostPairs(costMatrix);
 
-    for (const track of availableTracks) {
-      const distance = Math.hypot(bounds.centerX - track.centerX, bounds.centerY - track.centerY);
-      const sizeChange = Math.abs(Math.log((bounds.width + 0.01) / (track.width + 0.01)));
-      const cost = distance + sizeChange * 0.025;
-      if (distance < Math.max(0.12, track.width * 0.85) && cost < bestCost) {
-        bestTrack = track;
-        bestCost = cost;
-      }
+  return detections.map((bounds, detectionIndex) => {
+    const trackIndex = assignments[detectionIndex];
+    const track = trackIndex >= 0 && trackIndex < tracks.length ? tracks[trackIndex] : undefined;
+    if (track) {
+      const elapsed = Math.max((now - track.lastSeen) / 1000, INFERENCE_INTERVAL_MS / 1000);
+      const measuredVelocityX = (bounds.centerX - track.centerX) / elapsed;
+      const measuredVelocityY = (bounds.centerY - track.centerY) / elapsed;
+      track.velocityX = track.velocityX * 0.6 + Math.max(-1.5, Math.min(1.5, measuredVelocityX)) * 0.4;
+      track.velocityY = track.velocityY * 0.6 + Math.max(-1.5, Math.min(1.5, measuredVelocityY)) * 0.4;
+      track.centerX = bounds.centerX;
+      track.centerY = bounds.centerY;
+      track.width = bounds.width;
+      track.height = bounds.height;
+      track.lastSeen = now;
+      return track;
     }
 
-    if (bestTrack) {
-      availableTracks.delete(bestTrack);
-      bestTrack.centerX = bounds.centerX;
-      bestTrack.centerY = bounds.centerY;
-      bestTrack.width = bounds.width;
-      bestTrack.lastSeen = now;
-      return bestTrack;
-    }
-
-    const track = {
+    const newTrack = {
       id: nextFaceId++,
       centerX: bounds.centerX,
       centerY: bounds.centerY,
       width: bounds.width,
+      height: bounds.height,
+      velocityX: 0,
+      velocityY: 0,
       lastSeen: now,
       activeCues: new Set(),
       lastAwardAt: new Map(),
     };
-    faceTracks.set(track.id, track);
-    ensureFaceScore(track.id);
+    faceTracks.set(newTrack.id, newTrack);
+    ensureFaceScore(newTrack.id);
     saveGame();
-    return track;
+    return newTrack;
   });
 }
 
