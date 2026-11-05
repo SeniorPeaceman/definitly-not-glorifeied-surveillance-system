@@ -57,12 +57,22 @@ function readSavedGame() {
       const previousAction = typeof score.lastEvent === "string"
         ? score.lastEvent.replace(/\s+\+\d+(?:\.\d+)?$/, "")
         : "";
-      const actions = Array.isArray(score.actions)
-        ? score.actions.filter((action) => typeof action === "string")
-        : previousAction && !["Ready for cues", "No recent cue", "Points cleared"].includes(previousAction)
-          ? [previousAction]
-          : [];
-      return { id: score.id, points: score.points, actions: [...new Set(actions)] };
+      const actions = {};
+      if (Array.isArray(score.actions)) {
+        for (const action of score.actions) {
+          const cue = CUES.find(({ label }) => label === action);
+          if (cue) actions[cue.id] = 1;
+        }
+      } else if (score.actions && typeof score.actions === "object") {
+        for (const cue of CUES) {
+          const count = score.actions[cue.id];
+          if (Number.isInteger(count) && count > 0) actions[cue.id] = count;
+        }
+      } else if (previousAction && !["Ready for cues", "No recent cue", "Points cleared"].includes(previousAction)) {
+        const cue = CUES.find(({ label }) => label === previousAction);
+        if (cue) actions[cue.id] = 1;
+      }
+      return { id: score.id, points: score.points, actions };
     });
     const unassignedScores = Array.isArray(saved?.unassignedScores)
       ? saved.unassignedScores.filter(Number.isFinite)
@@ -144,7 +154,7 @@ function ensureFaceScore(id) {
   return faceScores.get(id);
 }
 
-// Render each face's number, point total, and unique list of detected actions.
+// Render each face's number, point total, and count of each detected action.
 function updateScoreboard() {
   scoreList.replaceChildren();
   const standings = [
@@ -165,7 +175,10 @@ function updateScoreboard() {
   for (const [rank, scoreEntry] of standings.entries()) {
     const item = document.createElement("li");
     const actions = scoreEntry.kind === "face"
-      ? scoreEntry.actions.join(", ") || "None"
+      ? Object.entries(scoreEntry.actions)
+        .filter(([cueId, count]) => cueById.has(cueId) && count > 0)
+        .map(([cueId, count]) => `${cueById.get(cueId).label} (${count})`)
+        .join(", ") || "None"
       : "Unavailable (face number cleared)";
     item.textContent = scoreEntry.kind === "face"
       ? `Face (${scoreEntry.id}), Points: ${scoreEntry.points}, List of actions: ${actions}`
@@ -388,7 +401,7 @@ function collectCueEvents(faceResult, handResult, poseResult, tracks) {
   return cuesByFace;
 }
 
-// Award points only when a cue first appears and its repeat cooldown has elapsed.
+// Count each cue activation and award points when its repeat cooldown has elapsed.
 function scoreCueEvents(cuesByFace, tracks, now) {
   let changed = false;
   const visibleIds = new Set(tracks.map((track) => track.id));
@@ -402,14 +415,14 @@ function scoreCueEvents(cuesByFace, tracks, now) {
     const faceScore = ensureFaceScore(id);
     for (const cueId of cues) {
       if (track.activeCues.has(cueId)) continue;
+      const cue = cueById.get(cueId);
+      if (!cue) continue;
+      faceScore.actions[cueId] = (faceScore.actions[cueId] ?? 0) + 1;
+      changed = true;
+
       const lastAwardAt = track.lastAwardAt.get(cueId) ?? -Infinity;
       if (now - lastAwardAt < CUE_COOLDOWN_MS) continue;
 
-      const cue = cueById.get(cueId);
-      if (cue && !faceScore.actions.includes(cue.label)) {
-        faceScore.actions.push(cue.label);
-        changed = true;
-      }
       const points = getPoints(cueId);
       faceScore.points += points;
       track.lastAwardAt.set(cueId, now);
