@@ -119,7 +119,7 @@ const drawingUtils = new DrawingUtils(overlayContext);
 
 // Show camera, permission, and storage feedback in the page's live status region.
 function setStatus(message) {
-  statusElement.textContent = message;
+  if (statusElement) statusElement.textContent = message;
 }
 
 // Persist the scoreboard and cue settings unless the user deleted saved data this session.
