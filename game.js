@@ -110,7 +110,6 @@ const deleteSavedDataButton = document.querySelector("#delete-saved-data-button"
 const statusElement = document.querySelector("#status");
 const video = document.querySelector("#camera");
 const overlay = document.querySelector("#tracking-overlay");
-const stageIdle = document.querySelector("#stage-idle");
 const overlayContext = overlay.getContext("2d");
 const faceCount = document.querySelector("#face-count");
 const handCount = document.querySelector("#hand-count");
@@ -518,7 +517,6 @@ async function startCamera() {
     });
     video.srcObject = cameraStream;
     await video.play();
-    stageIdle.hidden = true;
 
     if (!faceLandmarker || !handLandmarker || !poseLandmarker) {
       setStatus("Loading face, hand, and pose models…");
@@ -551,7 +549,6 @@ function stopCamera(message = "Camera off. Scores stay saved on this device.") {
   cameraStream = undefined;
   video.srcObject = null;
   overlayContext.clearRect(0, 0, overlay.width, overlay.height);
-  stageIdle.hidden = false;
   faceTracks.clear();
   faceCount.value = "0";
   handCount.value = "0";
