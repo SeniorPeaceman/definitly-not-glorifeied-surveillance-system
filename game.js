@@ -48,11 +48,22 @@ function readSavedGame() {
   try {
     const savedValue = localStorage.getItem(STORAGE_KEY) ?? localStorage.getItem(LEGACY_STORAGE_KEY);
     const saved = JSON.parse(savedValue ?? "null");
-    const faceScores = Array.isArray(saved?.faceScores)
+    const storedFaceScores = Array.isArray(saved?.faceScores)
       ? saved.faceScores.filter((score) => Number.isInteger(score.id) && Number.isFinite(score.points))
       : Array.isArray(saved?.players)
         ? saved.players.filter((score) => Number.isInteger(score.id) && Number.isFinite(score.points))
       : [];
+    const faceScores = storedFaceScores.map((score) => {
+      const previousAction = typeof score.lastEvent === "string"
+        ? score.lastEvent.replace(/\s+\+\d+(?:\.\d+)?$/, "")
+        : "";
+      const actions = Array.isArray(score.actions)
+        ? score.actions.filter((action) => typeof action === "string")
+        : previousAction && !["Ready for cues", "No recent cue", "Points cleared"].includes(previousAction)
+          ? [previousAction]
+          : [];
+      return { id: score.id, points: score.points, actions: [...new Set(actions)] };
+    });
     const unassignedScores = Array.isArray(saved?.unassignedScores)
       ? saved.unassignedScores.filter(Number.isFinite)
       : [];
@@ -125,22 +136,17 @@ function getPoints(cueId) {
   return cue ? Number(document.querySelector(`#${cue.input}`).value) : 0;
 }
 
-// Create a zero-point scoreboard entry when a face receives its first track ID.
+// Create a zero-point score and empty action list for a newly numbered face.
 function ensureFaceScore(id) {
   if (!faceScores.has(id)) {
-    faceScores.set(id, { id, points: 0, lastEvent: "Ready for cues" });
+    faceScores.set(id, { id, points: 0, actions: [] });
   }
   return faceScores.get(id);
 }
 
-// Render the saved scoreboard in descending point order and mark visible faces.
+// Render each face's number, point total, and unique list of detected actions.
 function updateScoreboard() {
   scoreList.replaceChildren();
-  const activeIds = new Set(
-    [...faceTracks.values()]
-      .filter((track) => performance.now() - track.lastSeen < 1000)
-      .map((track) => track.id),
-  );
   const standings = [
     ...[...faceScores.values()].map((score) => ({ ...score, kind: "face" })),
     ...unassignedScores.map((points, index) => ({ points, index, kind: "unassigned" })),
@@ -158,40 +164,12 @@ function updateScoreboard() {
 
   for (const [rank, scoreEntry] of standings.entries()) {
     const item = document.createElement("li");
-    item.className = "score-row";
-
-    const identity = document.createElement("div");
-    identity.className = "score-identity";
-    const detail = document.createElement("span");
-    detail.className = "score-detail";
-    const name = document.createElement("strong");
-    name.textContent = scoreEntry.kind === "face"
-      ? `Face ${scoreEntry.id}`
-      : `Unassigned total ${scoreEntry.index + 1}`;
-    const event = document.createElement("small");
-    event.textContent = scoreEntry.kind === "face"
-      ? scoreEntry.lastEvent ?? "No recent cue"
-      : "Face number cleared";
-    detail.append(name, event);
-    if (scoreEntry.kind === "face") {
-      const number = document.createElement("span");
-      number.className = "face-number";
-      number.textContent = `#${scoreEntry.id}`;
-      identity.append(number);
-    }
-    identity.append(detail);
-
-    const score = document.createElement("strong");
-    score.className = "score-total";
-    score.textContent = String(scoreEntry.points);
-    score.setAttribute("aria-label", `${scoreEntry.points} points`);
-
-    const state = document.createElement("span");
-    const isLive = scoreEntry.kind === "face" && activeIds.has(scoreEntry.id);
-    state.className = isLive ? "face-score-state is-live" : "face-score-state";
-    state.textContent = isLive ? "LIVE" : rank === 0 ? "LEAD" : "SAVED";
-
-    item.append(identity, score, state);
+    const actions = scoreEntry.kind === "face"
+      ? scoreEntry.actions.join(", ") || "None"
+      : "Unavailable (face number cleared)";
+    item.textContent = scoreEntry.kind === "face"
+      ? `Face (${scoreEntry.id}), Points: ${scoreEntry.points}, List of actions: ${actions}`
+      : `Unassigned total (${scoreEntry.index + 1}), Points: ${scoreEntry.points}, List of actions: ${actions}`;
     scoreList.append(item);
   }
 }
@@ -427,9 +405,13 @@ function scoreCueEvents(cuesByFace, tracks, now) {
       const lastAwardAt = track.lastAwardAt.get(cueId) ?? -Infinity;
       if (now - lastAwardAt < CUE_COOLDOWN_MS) continue;
 
+      const cue = cueById.get(cueId);
+      if (cue && !faceScore.actions.includes(cue.label)) {
+        faceScore.actions.push(cue.label);
+        changed = true;
+      }
       const points = getPoints(cueId);
       faceScore.points += points;
-      faceScore.lastEvent = `${cueById.get(cueId).label} +${points}`;
       track.lastAwardAt.set(cueId, now);
       changed = true;
     }
