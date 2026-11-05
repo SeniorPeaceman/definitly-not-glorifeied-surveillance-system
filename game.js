@@ -26,7 +26,8 @@ const MAX_POSES = 5;
 const INFERENCE_INTERVAL_MS = 1000 / 12;
 const TRACK_TIMEOUT_MS = 2200;
 const CUE_COOLDOWN_MS = 1200;
-const STORAGE_KEY = "cue-carnival-game-v1";
+const STORAGE_KEY = "definitly-not-glorified-surveillance-system-v1";
+const LEGACY_STORAGE_KEY = "cue-carnival-game-v1";
 const WASM_URL =
   "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm";
 
@@ -45,23 +46,31 @@ const cueById = new Map(CUES.map((cue) => [cue.id, cue]));
 // Load only saved game data and tolerate missing, invalid, or blocked storage.
 function readSavedGame() {
   try {
-    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "null");
-    const players = Array.isArray(saved?.players)
-      ? saved.players.filter((player) => Number.isInteger(player.id) && Number.isFinite(player.points))
+    const savedValue = localStorage.getItem(STORAGE_KEY) ?? localStorage.getItem(LEGACY_STORAGE_KEY);
+    const saved = JSON.parse(savedValue ?? "null");
+    const faceScores = Array.isArray(saved?.faceScores)
+      ? saved.faceScores.filter((score) => Number.isInteger(score.id) && Number.isFinite(score.points))
+      : Array.isArray(saved?.players)
+        ? saved.players.filter((score) => Number.isInteger(score.id) && Number.isFinite(score.points))
       : [];
-    const highestId = players.reduce((highest, player) => Math.max(highest, player.id), 0);
+    const unassignedScores = Array.isArray(saved?.unassignedScores)
+      ? saved.unassignedScores.filter(Number.isFinite)
+      : [];
+    const highestId = faceScores.reduce((highest, score) => Math.max(highest, score.id), 0);
     return {
       nextFaceId: Math.max(highestId + 1, Number(saved?.nextFaceId) || 1),
-      players,
+      faceScores,
+      unassignedScores,
       settings: saved?.settings && typeof saved.settings === "object" ? saved.settings : {},
     };
   } catch {
-    return { nextFaceId: 1, players: [], settings: {} };
+    return { nextFaceId: 1, faceScores: [], unassignedScores: [], settings: {} };
   }
 }
 
 const savedGame = readSavedGame();
-const players = new Map(savedGame.players.map((player) => [player.id, player]));
+const faceScores = new Map(savedGame.faceScores.map((score) => [score.id, score]));
+let unassignedScores = savedGame.unassignedScores;
 // Keep active camera and face-track state in memory; only the scoreboard is persisted.
 let nextFaceId = savedGame.nextFaceId;
 let faceLandmarker;
@@ -76,7 +85,7 @@ const faceTracks = new Map();
 const startButton = document.querySelector("#start-button");
 const stopButton = document.querySelector("#stop-button");
 const clearButton = document.querySelector("#clear-scores-button");
-const clearSavedDataButton = document.querySelector("#clear-saved-data-button");
+const clearFaceDataButton = document.querySelector("#clear-face-data-button");
 const statusElement = document.querySelector("#status");
 const video = document.querySelector("#camera");
 const overlay = document.querySelector("#tracking-overlay");
@@ -96,16 +105,17 @@ function setStatus(message) {
 // Save the scoreboard; omit settings and recent cues when clearing saved details.
 function saveGame(includeSettingsAndEvents = true) {
   try {
-    const savedPlayers = [...players.values()].map(({ id, points, lastEvent }) =>
+    const savedFaceScores = [...faceScores.values()].map(({ id, points, lastEvent }) =>
       includeSettingsAndEvents ? { id, points, lastEvent } : { id, points },
     );
-    const savedData = { nextFaceId, players: savedPlayers };
+    const savedData = { nextFaceId, faceScores: savedFaceScores, unassignedScores };
     if (includeSettingsAndEvents) {
       savedData.settings = Object.fromEntries(
         CUES.map(({ id, input }) => [id, Number(document.querySelector(`#${input}`).value)]),
       );
     }
     localStorage.setItem(STORAGE_KEY, JSON.stringify(savedData));
+    localStorage.removeItem(LEGACY_STORAGE_KEY);
   } catch {
     setStatus("Browser storage is unavailable; this session's scores will not persist.");
   }
@@ -118,11 +128,11 @@ function getPoints(cueId) {
 }
 
 // Create a zero-point scoreboard entry when a face receives its first track ID.
-function ensurePlayer(id) {
-  if (!players.has(id)) {
-    players.set(id, { id, points: 0, lastEvent: "Ready for cues" });
+function ensureFaceScore(id) {
+  if (!faceScores.has(id)) {
+    faceScores.set(id, { id, points: 0, lastEvent: "Ready for cues" });
   }
-  return players.get(id);
+  return faceScores.get(id);
 }
 
 // Render the saved scoreboard in descending point order and mark visible faces.
@@ -133,44 +143,55 @@ function updateScoreboard() {
       .filter((track) => performance.now() - track.lastSeen < 1000)
       .map((track) => track.id),
   );
-  const standings = [...players.values()].sort((first, second) =>
-    second.points - first.points || first.id - second.id,
+  const standings = [
+    ...[...faceScores.values()].map((score) => ({ ...score, kind: "face" })),
+    ...unassignedScores.map((points, index) => ({ points, index, kind: "unassigned" })),
+  ].sort((first, second) =>
+    second.points - first.points || (first.id ?? Infinity) - (second.id ?? Infinity),
   );
 
   if (standings.length === 0) {
     const empty = document.createElement("li");
     empty.className = "empty-state";
-    empty.textContent = "No players yet. Start the camera to begin.";
+    empty.textContent = "No points yet. Start the camera to begin.";
     scoreList.append(empty);
     return;
   }
 
-  for (const [rank, player] of standings.entries()) {
+  for (const [rank, scoreEntry] of standings.entries()) {
     const item = document.createElement("li");
     item.className = "score-row";
 
     const identity = document.createElement("div");
     identity.className = "score-identity";
-    const number = document.createElement("span");
-    number.className = "face-number";
-    number.textContent = `#${player.id}`;
     const detail = document.createElement("span");
     detail.className = "score-detail";
     const name = document.createElement("strong");
-    name.textContent = `Face ${player.id}`;
+    name.textContent = scoreEntry.kind === "face"
+      ? `Face ${scoreEntry.id}`
+      : `Unassigned total ${scoreEntry.index + 1}`;
     const event = document.createElement("small");
-    event.textContent = player.lastEvent ?? "No recent cue";
+    event.textContent = scoreEntry.kind === "face"
+      ? scoreEntry.lastEvent ?? "No recent cue"
+      : "Face number cleared";
     detail.append(name, event);
-    identity.append(number, detail);
+    if (scoreEntry.kind === "face") {
+      const number = document.createElement("span");
+      number.className = "face-number";
+      number.textContent = `#${scoreEntry.id}`;
+      identity.append(number);
+    }
+    identity.append(detail);
 
     const score = document.createElement("strong");
     score.className = "score-total";
-    score.textContent = String(player.points);
-    score.setAttribute("aria-label", `${player.points} points`);
+    score.textContent = String(scoreEntry.points);
+    score.setAttribute("aria-label", `${scoreEntry.points} points`);
 
     const state = document.createElement("span");
-    state.className = activeIds.has(player.id) ? "player-state is-live" : "player-state";
-    state.textContent = activeIds.has(player.id) ? "LIVE" : rank === 0 ? "LEAD" : "SAVED";
+    const isLive = scoreEntry.kind === "face" && activeIds.has(scoreEntry.id);
+    state.className = isLive ? "face-score-state is-live" : "face-score-state";
+    state.textContent = isLive ? "LIVE" : rank === 0 ? "LEAD" : "SAVED";
 
     item.append(identity, score, state);
     scoreList.append(item);
@@ -230,7 +251,7 @@ function matchFaces(faceLandmarks, now) {
       lastAwardAt: new Map(),
     };
     faceTracks.set(track.id, track);
-    ensurePlayer(track.id);
+    ensureFaceScore(track.id);
     saveGame();
     return track;
   });
@@ -322,15 +343,15 @@ function scoreCueEvents(cuesByFace, tracks, now) {
 
   for (const [id, cues] of cuesByFace) {
     const track = faceTracks.get(id);
-    const player = ensurePlayer(id);
+    const faceScore = ensureFaceScore(id);
     for (const cueId of cues) {
       if (track.activeCues.has(cueId)) continue;
       const lastAwardAt = track.lastAwardAt.get(cueId) ?? -Infinity;
       if (now - lastAwardAt < CUE_COOLDOWN_MS) continue;
 
       const points = getPoints(cueId);
-      player.points += points;
-      player.lastEvent = `${cueById.get(cueId).label} +${points}`;
+      faceScore.points += points;
+      faceScore.lastEvent = `${cueById.get(cueId).label} +${points}`;
       track.lastAwardAt.set(cueId, now);
       changed = true;
     }
@@ -446,10 +467,11 @@ function stopCamera(message = "Camera off. Scores stay saved on this device.") {
 
 // Zero the saved point totals without deleting face numbers or cue settings.
 function clearScores() {
-  for (const player of players.values()) {
-    player.points = 0;
-    player.lastEvent = "Points cleared";
+  for (const faceScore of faceScores.values()) {
+    faceScore.points = 0;
+    faceScore.lastEvent = "Points cleared";
   }
+  unassignedScores = [];
   for (const track of faceTracks.values()) {
     track.activeCues.clear();
     track.lastAwardAt.clear();
@@ -459,20 +481,22 @@ function clearScores() {
   setStatus("Points cleared. Face numbers are kept for this saved game.");
 }
 
-// Restore default sliders and remove saved cue details while preserving IDs and points.
-function clearSavedData() {
+// Clear face IDs and settings, retaining their totals as unassigned scoreboard entries.
+function forgetFaceData() {
   for (const cue of CUES) {
     document.querySelector(`#${cue.input}`).value = String(cue.defaultPoints);
     document.querySelector(`#${cue.input}-value`).value = `+${cue.defaultPoints}`;
   }
-  for (const player of players.values()) player.lastEvent = "No recent cue";
-  for (const track of faceTracks.values()) {
-    track.activeCues.clear();
-    track.lastAwardAt.clear();
-  }
+  unassignedScores = [
+    ...unassignedScores,
+    ...[...faceScores.values()].map(({ points }) => points),
+  ];
+  faceScores.clear();
+  nextFaceId = 1;
+  faceTracks.clear();
   saveGame(false);
   updateScoreboard();
-  setStatus("Saved settings and cue details cleared. Face numbers and points kept.");
+  setStatus("Face numbers and settings cleared. Point totals kept without face IDs.");
 }
 
 // Restore saved slider choices when present; defaults remain unsaved on initial load.
@@ -487,7 +511,7 @@ for (const cue of CUES) {
 startButton.addEventListener("click", startCamera);
 stopButton.addEventListener("click", () => stopCamera());
 clearButton.addEventListener("click", clearScores);
-clearSavedDataButton.addEventListener("click", clearSavedData);
+clearFaceDataButton.addEventListener("click", forgetFaceData);
 window.addEventListener("pagehide", () => stopCamera("Camera closed."));
 
 updatePointControls(false);

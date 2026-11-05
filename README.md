@@ -1,4 +1,4 @@
-# definitly-not-glorifeied-surveillance-system
+# definitly not glorified surveillance system
 Vibe Coded Art Project / Game thingy
 
 ## Deploy to Neocities
@@ -12,6 +12,7 @@ The GitHub Actions workflow deploys the site to Neocities on every push to
 4. Push to `main`, or run **Deploy to Neocities** from the repository's Actions tab.
 
 The workflow publishes the HTML page, stylesheet, and tracking modules. Face
-numbers are assigned to visible tracks, while point totals, used numbers, and
-slider settings persist in this browser. The app does not save images or face
-templates and does not identify people across separate visits.
+numbers are assigned to visible tracks, and totals persist in this browser. The
+face-data action removes saved face numbers and slider settings while keeping
+their totals as unassigned scores. The app does not save images or face templates
+and does not identify people across separate visits.
