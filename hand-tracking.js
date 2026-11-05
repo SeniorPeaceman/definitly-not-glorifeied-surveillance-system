@@ -55,11 +55,7 @@ export function classifyGesture(landmarks) {
   const middleFingerRaised = extended[1] && curled[0] && curled[2] && curled[3];
 
   if (middleFingerRaised) return "middle-finger";
-  if (curled.every(Boolean)) {
-    // Hand height is used as a simple proxy to distinguish a raised fist.
-    const upperFrameFist = landmarks[0].y < 0.45;
-    return upperFrameFist ? "raised-fist" : "fist";
-  }
+  if (curled.every(Boolean)) return "fist";
   return undefined;
 }
 

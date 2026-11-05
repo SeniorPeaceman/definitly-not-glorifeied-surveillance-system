@@ -316,7 +316,7 @@ function matchFaces(faceLandmarks, now) {
       velocityX: 0,
       velocityY: 0,
       lastSeen: now,
-      activeCues: new Set(),
+      cueStates: new Map(),
       lastAwardAt: new Map(),
     };
     faceTracks.set(newTrack.id, newTrack);
@@ -369,28 +369,40 @@ function collectCueEvents(faceResult, handResult, poseResult, tracks) {
     const id = closestFaceId(poseHead(pose), faceResult.faceLandmarks, tracks, 0.3);
     if (id !== undefined) {
       for (const cue of classifyPose(pose)) addCue(id, cue);
+      return { id, landmarks: pose };
     }
-    return id;
+    return undefined;
   });
 
   for (const hand of handResult.landmarks) {
-    const cue = classifyGesture(hand);
+    let cue = classifyGesture(hand);
     if (!cue) continue;
 
     const wrist = hand[0];
     let owner;
+    let ownerPose;
+    let ownerPoseWristIndex;
     let nearestWristDistance = 0.28;
     for (const [poseIndex, pose] of poseResult.landmarks.entries()) {
       const poseOwner = poseOwners[poseIndex];
-      if (poseOwner === undefined) continue;
+      if (!poseOwner) continue;
       for (const wristIndex of [15, 16]) {
         const poseWrist = pose[wristIndex];
         if (!poseWrist || (poseWrist.visibility ?? 1) < 0.35) continue;
         const distance = Math.hypot(wrist.x - poseWrist.x, wrist.y - poseWrist.y);
         if (distance < nearestWristDistance) {
           nearestWristDistance = distance;
-          owner = poseOwner;
+          owner = poseOwner.id;
+          ownerPose = pose;
+          ownerPoseWristIndex = wristIndex;
         }
+      }
+    }
+
+    if (cue === "fist" && ownerPose) {
+      const shoulder = ownerPose[ownerPoseWristIndex === 15 ? 11 : 12];
+      if (shoulder && (shoulder.visibility ?? 1) >= 0.35 && wrist.y < shoulder.y - 0.06) {
+        cue = "raised-fist";
       }
     }
 
@@ -401,34 +413,46 @@ function collectCueEvents(faceResult, handResult, poseResult, tracks) {
   return cuesByFace;
 }
 
-// Count each cue activation and award points when its repeat cooldown has elapsed.
-function scoreCueEvents(cuesByFace, tracks, now) {
+// Require two detected frames to activate and two missing frames to end a cue.
+function scoreCueEvents(cuesByFace, now) {
   let changed = false;
-  const visibleIds = new Set(tracks.map((track) => track.id));
-
   for (const track of faceTracks.values()) {
-    if (!visibleIds.has(track.id)) track.activeCues.clear();
-  }
+    const detectedCues = cuesByFace.get(track.id) ?? new Set();
+    const faceScore = ensureFaceScore(track.id);
+    const cueIds = new Set([...track.cueStates.keys(), ...detectedCues]);
 
-  for (const [id, cues] of cuesByFace) {
-    const track = faceTracks.get(id);
-    const faceScore = ensureFaceScore(id);
-    for (const cueId of cues) {
-      if (track.activeCues.has(cueId)) continue;
+    for (const cueId of cueIds) {
       const cue = cueById.get(cueId);
       if (!cue) continue;
-      faceScore.actions[cueId] = (faceScore.actions[cueId] ?? 0) + 1;
-      changed = true;
+      const state = track.cueStates.get(cueId) ?? {
+        detectedFrames: 0,
+        missingFrames: 0,
+        active: false,
+      };
 
-      const lastAwardAt = track.lastAwardAt.get(cueId) ?? -Infinity;
-      if (now - lastAwardAt < CUE_COOLDOWN_MS) continue;
+      if (detectedCues.has(cueId)) {
+        state.detectedFrames += 1;
+        state.missingFrames = 0;
+        if (!state.active && state.detectedFrames >= 2) {
+          state.active = true;
+          faceScore.actions[cueId] = (faceScore.actions[cueId] ?? 0) + 1;
+          changed = true;
 
-      const points = getPoints(cueId);
-      faceScore.points += points;
-      track.lastAwardAt.set(cueId, now);
-      changed = true;
+          const lastAwardAt = track.lastAwardAt.get(cueId) ?? -Infinity;
+          if (now - lastAwardAt >= CUE_COOLDOWN_MS) {
+            faceScore.points += getPoints(cueId);
+            track.lastAwardAt.set(cueId, now);
+            changed = true;
+          }
+        }
+      } else {
+        state.detectedFrames = 0;
+        state.missingFrames += 1;
+        if (state.missingFrames >= 2) state.active = false;
+      }
+
+      track.cueStates.set(cueId, state);
     }
-    track.activeCues = cues;
   }
 
   if (changed) saveGame();
@@ -459,7 +483,7 @@ function detectFrame() {
     faceCount.value = String(faceResult.faceLandmarks.length);
     handCount.value = String(handResult.landmarks.length);
     poseCount.value = String(poseResult.landmarks.length);
-    scoreCueEvents(cuesByFace, tracks, now);
+    scoreCueEvents(cuesByFace, now);
 
     drawFaceMesh(faceResult, video, overlay, overlayContext, drawingUtils, tracks.map((track) => track.id));
     drawPoses(poseResult, drawingUtils);
