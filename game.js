@@ -463,13 +463,19 @@ function stopCamera(message = "Camera off. Scores stay saved on this device.") {
   updateScoreboard();
 }
 
-// Delete this app's stored copies without changing the in-memory scoreboard.
+// Delete stored game data and clear the session so the old scoreboard cannot reappear.
 function deleteSavedData() {
   try {
     localStorage.removeItem(STORAGE_KEY);
     localStorage.removeItem(LEGACY_STORAGE_KEY);
     storageEnabled = false;
-    setStatus("Saved data deleted. Current scores remain until reload and will not be saved again.");
+    stopCamera("Saved data deleted. Camera stopped.");
+    faceScores.clear();
+    unassignedScores = [];
+    nextFaceId = 1;
+    faceTracks.clear();
+    updateScoreboard();
+    setStatus("Saved data deleted. Scores are cleared for this session.");
   } catch {
     setStatus("Could not delete saved data from browser storage.");
   }

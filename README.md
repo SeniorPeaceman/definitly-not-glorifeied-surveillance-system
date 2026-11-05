@@ -13,7 +13,6 @@ The GitHub Actions workflow deploys the site to Neocities on every push to
 
 The workflow publishes the HTML page, stylesheet, and tracking modules. Face
 numbers, totals, and slider settings persist in this browser. **Delete saved
-data** removes this app's local-storage keys without changing the current
-scoreboard; scores remain visible until reload and are not saved again during
-that session. The app does not save images or face templates and does not
-identify people across separate visits.
+data** removes this app's local-storage keys and clears the current scoreboard
+and camera session without writing zero scores back. The app does not save images
+or face templates and does not identify people across separate visits.
