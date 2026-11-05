@@ -1,0 +1,38 @@
+name: Deploy to Neocities
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: neocities-deploy
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out site files
+        uses: actions/checkout@v4
+
+      - name: Upload site to Neocities
+        env:
+          NEOCITIES_API_KEY: ${{ secrets.NEOCITIES_API_KEY }}
+        run: |
+          if [ -z "$NEOCITIES_API_KEY" ]; then
+            echo "Add NEOCITIES_API_KEY in the repository's Actions secrets."
+            exit 1
+          fi
+
+          curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer $NEOCITIES_API_KEY" \
+            -F "index.html=@index.html" \
+            -F "app.js=@app.js" \
+            -F "face-tracking.js=@face-tracking.js" \
+            -F "hand-tracking.js=@hand-tracking.js" \
+            https://neocities.org/api/upload
