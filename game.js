@@ -19,6 +19,7 @@ import {
   drawPoses,
 } from "./pose-tracking.js";
 
+// Set model limits, frame cadence, track lifetime, and per-cue repeat cooldown.
 const MAX_FACES = 5;
 const MAX_HANDS = 4;
 const MAX_POSES = 5;
@@ -29,6 +30,7 @@ const STORAGE_KEY = "cue-carnival-game-v1";
 const WASM_URL =
   "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm";
 
+// Connect each detectable cue to its slider, display label, and default points.
 const CUES = [
   { id: "fist", label: "Fist", input: "points-fist", defaultPoints: 2 },
   { id: "raised-fist", label: "Raised fist", input: "points-raised-fist", defaultPoints: 3 },
@@ -40,6 +42,7 @@ const CUES = [
 ];
 const cueById = new Map(CUES.map((cue) => [cue.id, cue]));
 
+// Load only saved game data and tolerate missing, invalid, or blocked storage.
 function readSavedGame() {
   try {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "null");
@@ -59,6 +62,7 @@ function readSavedGame() {
 
 const savedGame = readSavedGame();
 const players = new Map(savedGame.players.map((player) => [player.id, player]));
+// Keep active camera and face-track state in memory; only the scoreboard is persisted.
 let nextFaceId = savedGame.nextFaceId;
 let faceLandmarker;
 let handLandmarker;
@@ -68,9 +72,11 @@ let animationFrameId;
 let lastInferenceAt = 0;
 const faceTracks = new Map();
 
+// Cache the controls and output elements used by the game page.
 const startButton = document.querySelector("#start-button");
 const stopButton = document.querySelector("#stop-button");
 const clearButton = document.querySelector("#clear-scores-button");
+const clearSavedDataButton = document.querySelector("#clear-saved-data-button");
 const statusElement = document.querySelector("#status");
 const video = document.querySelector("#camera");
 const overlay = document.querySelector("#tracking-overlay");
@@ -82,27 +88,36 @@ const poseCount = document.querySelector("#pose-count");
 const scoreList = document.querySelector("#score-list");
 const drawingUtils = new DrawingUtils(overlayContext);
 
+// Show camera, permission, and storage feedback in the page's live status region.
 function setStatus(message) {
   statusElement.textContent = message;
 }
 
-function saveGame() {
+// Save the scoreboard; omit settings and recent cues when clearing saved details.
+function saveGame(includeSettingsAndEvents = true) {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({
-      nextFaceId,
-      players: [...players.values()],
-      settings: Object.fromEntries(CUES.map(({ id, input }) => [id, Number(document.querySelector(`#${input}`).value)])),
-    }));
+    const savedPlayers = [...players.values()].map(({ id, points, lastEvent }) =>
+      includeSettingsAndEvents ? { id, points, lastEvent } : { id, points },
+    );
+    const savedData = { nextFaceId, players: savedPlayers };
+    if (includeSettingsAndEvents) {
+      savedData.settings = Object.fromEntries(
+        CUES.map(({ id, input }) => [id, Number(document.querySelector(`#${input}`).value)]),
+      );
+    }
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(savedData));
   } catch {
     setStatus("Browser storage is unavailable; this session's scores will not persist.");
   }
 }
 
+// Read the current slider value for a detected cue.
 function getPoints(cueId) {
   const cue = cueById.get(cueId);
   return cue ? Number(document.querySelector(`#${cue.input}`).value) : 0;
 }
 
+// Create a zero-point scoreboard entry when a face receives its first track ID.
 function ensurePlayer(id) {
   if (!players.has(id)) {
     players.set(id, { id, points: 0, lastEvent: "Ready for cues" });
@@ -110,6 +125,7 @@ function ensurePlayer(id) {
   return players.get(id);
 }
 
+// Render the saved scoreboard in descending point order and mark visible faces.
 function updateScoreboard() {
   scoreList.replaceChildren();
   const activeIds = new Set(
@@ -143,7 +159,7 @@ function updateScoreboard() {
     const name = document.createElement("strong");
     name.textContent = `Face ${player.id}`;
     const event = document.createElement("small");
-    event.textContent = player.lastEvent;
+    event.textContent = player.lastEvent ?? "No recent cue";
     detail.append(name, event);
     identity.append(number, detail);
 
@@ -161,15 +177,17 @@ function updateScoreboard() {
   }
 }
 
-function updatePointControls() {
+// Mirror slider values in their outputs and optionally persist the settings.
+function updatePointControls(save = true) {
   for (const cue of CUES) {
     const input = document.querySelector(`#${cue.input}`);
     const output = document.querySelector(`#${cue.input}-value`);
     output.value = `+${input.value}`;
   }
-  saveGame();
+  if (save) saveGame();
 }
 
+// Match each frame's detected faces to recent tracks, assigning new saved IDs when needed.
 function matchFaces(faceLandmarks, now) {
   for (const [id, track] of faceTracks) {
     if (now - track.lastSeen >= TRACK_TIMEOUT_MS) faceTracks.delete(id);
@@ -218,6 +236,7 @@ function matchFaces(faceLandmarks, now) {
   });
 }
 
+// Associate a pose head or hand point with the nearest visible face, if close enough.
 function closestFaceId(point, faceLandmarks, tracks, maxDistance) {
   if (!point) return undefined;
   let closestId;
@@ -234,6 +253,7 @@ function closestFaceId(point, faceLandmarks, tracks, maxDistance) {
   return closestId;
 }
 
+// Estimate the head location from the pose model's face and eye landmarks.
 function poseHead(pose) {
   const headPoints = pose.slice(0, 7).filter((point) => point && (point.visibility ?? 1) >= 0.4);
   if (headPoints.length === 0) return undefined;
@@ -243,6 +263,7 @@ function poseHead(pose) {
   };
 }
 
+// Combine facial expressions, body poses, and hand gestures under a face track.
 function collectCueEvents(faceResult, handResult, poseResult, tracks) {
   const cuesByFace = new Map(tracks.map((track) => [track.id, new Set()]));
   const addCue = (id, cue) => cuesByFace.get(id)?.add(cue);
@@ -290,6 +311,7 @@ function collectCueEvents(faceResult, handResult, poseResult, tracks) {
   return cuesByFace;
 }
 
+// Award points only when a cue first appears and its repeat cooldown has elapsed.
 function scoreCueEvents(cuesByFace, tracks, now) {
   let changed = false;
   const visibleIds = new Set(tracks.map((track) => track.id));
@@ -318,6 +340,7 @@ function scoreCueEvents(cuesByFace, tracks, now) {
   if (changed) saveGame();
 }
 
+// Run throttled model inference, update counts and scores, and redraw the overlay.
 function detectFrame() {
   if (!cameraStream) return;
   if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
@@ -356,6 +379,7 @@ function detectFrame() {
   animationFrameId = requestAnimationFrame(detectFrame);
 }
 
+// Request camera permission, initialize all three models, and start the frame loop.
 async function startCamera() {
   startButton.disabled = true;
   setStatus("Waiting for camera permission…");
@@ -399,6 +423,7 @@ async function startCamera() {
   }
 }
 
+// Stop the camera, clear transient tracks, and leave saved scoreboard data intact.
 function stopCamera(message = "Camera off. Scores stay saved on this device.") {
   if (animationFrameId !== undefined) {
     cancelAnimationFrame(animationFrameId);
@@ -419,6 +444,7 @@ function stopCamera(message = "Camera off. Scores stay saved on this device.") {
   updateScoreboard();
 }
 
+// Zero the saved point totals without deleting face numbers or cue settings.
 function clearScores() {
   for (const player of players.values()) {
     player.points = 0;
@@ -433,6 +459,23 @@ function clearScores() {
   setStatus("Points cleared. Face numbers are kept for this saved game.");
 }
 
+// Restore default sliders and remove saved cue details while preserving IDs and points.
+function clearSavedData() {
+  for (const cue of CUES) {
+    document.querySelector(`#${cue.input}`).value = String(cue.defaultPoints);
+    document.querySelector(`#${cue.input}-value`).value = `+${cue.defaultPoints}`;
+  }
+  for (const player of players.values()) player.lastEvent = "No recent cue";
+  for (const track of faceTracks.values()) {
+    track.activeCues.clear();
+    track.lastAwardAt.clear();
+  }
+  saveGame(false);
+  updateScoreboard();
+  setStatus("Saved settings and cue details cleared. Face numbers and points kept.");
+}
+
+// Restore saved slider choices when present; defaults remain unsaved on initial load.
 for (const cue of CUES) {
   const input = document.querySelector(`#${cue.input}`);
   const savedValue = savedGame.settings[cue.id];
@@ -440,10 +483,12 @@ for (const cue of CUES) {
   input.addEventListener("input", updatePointControls);
 }
 
+// Connect page actions and initialize the scoreboard without rewriting cleared settings.
 startButton.addEventListener("click", startCamera);
 stopButton.addEventListener("click", () => stopCamera());
 clearButton.addEventListener("click", clearScores);
+clearSavedDataButton.addEventListener("click", clearSavedData);
 window.addEventListener("pagehide", () => stopCamera("Camera closed."));
 
-updatePointControls();
+updatePointControls(false);
 updateScoreboard();

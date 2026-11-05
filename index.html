@@ -3,90 +3,53 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="theme-color" content="#f2f4e9">
-    <title>definitely not glorified surveillance system</title>
+    <title>Face Game</title>
+    <!-- Keep only the video-feed rules; all other elements use browser defaults. -->
     <link rel="stylesheet" href="./game.css">
+    <!-- Start the game after the document is available. -->
     <script type="module" src="./app.js"></script>
   </head>
   <body>
-
     <main>
+      <h1>Face Game</h1>
 
-          <div id="camera-stage">
-            <video id="camera" autoplay muted playsinline webkit-playsinline></video>
-            <canvas id="tracking-overlay" aria-label="Live face, hand, and pose tracking overlay"></canvas>
-            <div class="stage-idle" id="stage-idle">
-
-            </div>
-          </div>
-          <div class="camera-actions">
-            <button id="start-button" type="button">Start round</button>
-            <button id="stop-button" type="button" disabled>Stop camera</button>
-            <p id="status" role="status" aria-live="polite">Camera off. Saved scores stay in this browser.</p>
-          </div>
-          <div class="counts" aria-label="Live detection counts">
-            <span>Faces <output id="face-count">0</output></span>
-            <span>Hands <output id="hand-count">0</output></span>
-            <span>Poses <output id="pose-count">0</output></span>
-          </div>
-        </section>
-
-        <section aria-labelledby="board-title">
-          <div class="section-head board-head">
-            <h2 id="board-title">Pointboard</h2>
-            <button id="clear-scores-button" type="button">Clear points</button>
-          </div>
-          <ol id="score-list" aria-label="Face game points"></ol>
-        </section>
-      </div>
-
-      <section class="tuning-band" aria-labelledby="tuning-title">
-        <div class="tuning-inner wrap">
-          <div>
-            <p class="section-kicker">House rules / 01</p>
-            <h2 id="tuning-title">Set the points</h2>
-            <p class="tuning-copy">Each cue scores once when it appears, with a short repeat cooldown. Adjust any cue from zero to ten points.</p>
-          </div>
-          <div class="point-controls">
-            <div class="point-control">
-              <label for="points-fist">Fist</label>
-              <input id="points-fist" type="range" min="0" max="10" step="1" value="2">
-              <output id="points-fist-value" for="points-fist">+2</output>
-            </div>
-            <div class="point-control">
-              <label for="points-raised-fist">Raised fist</label>
-              <input id="points-raised-fist" type="range" min="0" max="10" step="1" value="3">
-              <output id="points-raised-fist-value" for="points-raised-fist">+3</output>
-            </div>
-            <div class="point-control">
-              <label for="points-middle-finger">Middle finger</label>
-              <input id="points-middle-finger" type="range" min="0" max="10" step="1" value="5">
-              <output id="points-middle-finger-value" for="points-middle-finger">+5</output>
-            </div>
-            <div class="point-control">
-              <label for="points-open-mouth">Open mouth</label>
-              <input id="points-open-mouth" type="range" min="0" max="10" step="1" value="1">
-              <output id="points-open-mouth-value" for="points-open-mouth">+1</output>
-            </div>
-            <div class="point-control">
-              <label for="points-lowered-brows">Lowered brows</label>
-              <input id="points-lowered-brows" type="range" min="0" max="10" step="1" value="1">
-              <output id="points-lowered-brows-value" for="points-lowered-brows">+1</output>
-            </div>
-            <div class="point-control">
-              <label for="points-both-arms-raised">Both arms raised</label>
-              <input id="points-both-arms-raised" type="range" min="0" max="10" step="1" value="2">
-              <output id="points-both-arms-raised-value" for="points-both-arms-raised">+2</output>
-            </div>
-            <div class="point-control">
-              <label for="points-arms-spread">Arms spread</label>
-              <input id="points-arms-spread" type="range" min="0" max="10" step="1" value="2">
-              <output id="points-arms-spread-value" for="points-arms-spread">+2</output>
-            </div>
-          </div>
+      <!-- Camera controls and live detector counts. -->
+      <section>
+        <h2>Camera</h2>
+        <div id="camera-stage">
+          <video id="camera" autoplay muted playsinline webkit-playsinline></video>
+          <canvas id="tracking-overlay" aria-label="Live face, hand, and pose tracking overlay"></canvas>
+          <p id="stage-idle">Camera off</p>
         </div>
+        <p>
+          <button id="start-button" type="button">Start round</button>
+          <button id="stop-button" type="button" disabled>Stop camera</button>
+        </p>
+        <p id="status" role="status" aria-live="polite">Camera off.</p>
+        <p>Faces: <output id="face-count">0</output></p>
+        <p>Hands: <output id="hand-count">0</output></p>
+        <p>Poses: <output id="pose-count">0</output></p>
+      </section>
+
+      <!-- Saved face totals and separate actions for points versus other saved data. -->
+      <section>
+        <h2>Points</h2>
+        <ol id="score-list" aria-label="Face game points"></ol>
+        <button id="clear-scores-button" type="button">Reset points</button>
+        <button id="clear-saved-data-button" type="button">Clear saved data (keep points)</button>
+      </section>
+
+      <!-- Each slider ID is read by game.js as the score for its matching cue. -->
+      <section>
+        <h2>Points per cue</h2>
+        <p><label for="points-fist">Fist</label> <input id="points-fist" type="range" min="0" max="10" step="1" value="2"> <output id="points-fist-value" for="points-fist">+2</output></p>
+        <p><label for="points-raised-fist">Raised fist</label> <input id="points-raised-fist" type="range" min="0" max="10" step="1" value="3"> <output id="points-raised-fist-value" for="points-raised-fist">+3</output></p>
+        <p><label for="points-middle-finger">Middle finger</label> <input id="points-middle-finger" type="range" min="0" max="10" step="1" value="5"> <output id="points-middle-finger-value" for="points-middle-finger">+5</output></p>
+        <p><label for="points-open-mouth">Open mouth</label> <input id="points-open-mouth" type="range" min="0" max="10" step="1" value="1"> <output id="points-open-mouth-value" for="points-open-mouth">+1</output></p>
+        <p><label for="points-lowered-brows">Lowered brows</label> <input id="points-lowered-brows" type="range" min="0" max="10" step="1" value="1"> <output id="points-lowered-brows-value" for="points-lowered-brows">+1</output></p>
+        <p><label for="points-both-arms-raised">Both arms raised</label> <input id="points-both-arms-raised" type="range" min="0" max="10" step="1" value="2"> <output id="points-both-arms-raised-value" for="points-both-arms-raised">+2</output></p>
+        <p><label for="points-arms-spread">Arms spread</label> <input id="points-arms-spread" type="range" min="0" max="10" step="1" value="2"> <output id="points-arms-spread-value" for="points-arms-spread">+2</output></p>
       </section>
     </main>
-
   </body>
 </html>

@@ -1,5 +1,6 @@
 import { FaceLandmarker } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
 
+// This module creates the face model, classifies facial cues, and draws face tracks.
 // Model file used for face landmarks and expression cues.
 const FACE_LANDMARKER_MODEL_URL =
   "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task";
@@ -33,6 +34,7 @@ export function classifyFace(blendshapes) {
   return cues;
 }
 
+// Return a normalized bounding box and center used to keep a face's track number stable.
 export function getFaceBounds(landmarks) {
   const xs = landmarks.map(({ x }) => x);
   const ys = landmarks.map(({ y }) => y);
@@ -53,6 +55,7 @@ export function getFaceBounds(landmarks) {
   };
 }
 
+// Draw the face mesh, track box, and readable ID label onto the mirrored video overlay.
 export function drawFaceMesh(result, video, canvas, context, drawingUtils, faceIds = []) {
   if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
     canvas.width = video.videoWidth;

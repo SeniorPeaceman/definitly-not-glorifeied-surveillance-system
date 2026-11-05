@@ -1,3 +1,4 @@
+# Publish the static game files to Neocities after pushes to main.
 name: Deploy to Neocities
 
 on:
