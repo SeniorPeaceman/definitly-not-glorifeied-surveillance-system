@@ -85,7 +85,6 @@ const faceTracks = new Map();
 const startButton = document.querySelector("#start-button");
 const stopButton = document.querySelector("#stop-button");
 const clearButton = document.querySelector("#clear-scores-button");
-const clearFaceDataButton = document.querySelector("#clear-face-data-button");
 const statusElement = document.querySelector("#status");
 const video = document.querySelector("#camera");
 const overlay = document.querySelector("#tracking-overlay");
@@ -102,18 +101,14 @@ function setStatus(message) {
   statusElement.textContent = message;
 }
 
-// Save the scoreboard; omit settings and recent cues when clearing saved details.
-function saveGame(includeSettingsAndEvents = true) {
+// Persist face scores, unassigned totals, numbering state, and cue settings.
+function saveGame() {
   try {
-    const savedFaceScores = [...faceScores.values()].map(({ id, points, lastEvent }) =>
-      includeSettingsAndEvents ? { id, points, lastEvent } : { id, points },
-    );
+    const savedFaceScores = [...faceScores.values()].map(({ id, points, lastEvent }) => ({ id, points, lastEvent }));
     const savedData = { nextFaceId, faceScores: savedFaceScores, unassignedScores };
-    if (includeSettingsAndEvents) {
-      savedData.settings = Object.fromEntries(
-        CUES.map(({ id, input }) => [id, Number(document.querySelector(`#${input}`).value)]),
-      );
-    }
+    savedData.settings = Object.fromEntries(
+      CUES.map(({ id, input }) => [id, Number(document.querySelector(`#${input}`).value)]),
+    );
     localStorage.setItem(STORAGE_KEY, JSON.stringify(savedData));
     localStorage.removeItem(LEGACY_STORAGE_KEY);
   } catch {
@@ -481,24 +476,6 @@ function clearScores() {
   setStatus("Points cleared. Face numbers are kept for this saved game.");
 }
 
-// Clear face IDs and settings, retaining their totals as unassigned scoreboard entries.
-function forgetFaceData() {
-  for (const cue of CUES) {
-    document.querySelector(`#${cue.input}`).value = String(cue.defaultPoints);
-    document.querySelector(`#${cue.input}-value`).value = `+${cue.defaultPoints}`;
-  }
-  unassignedScores = [
-    ...unassignedScores,
-    ...[...faceScores.values()].map(({ points }) => points),
-  ];
-  faceScores.clear();
-  nextFaceId = 1;
-  faceTracks.clear();
-  saveGame(false);
-  updateScoreboard();
-  setStatus("Face numbers and settings cleared. Point totals kept without face IDs.");
-}
-
 // Restore saved slider choices when present; defaults remain unsaved on initial load.
 for (const cue of CUES) {
   const input = document.querySelector(`#${cue.input}`);
@@ -511,7 +488,6 @@ for (const cue of CUES) {
 startButton.addEventListener("click", startCamera);
 stopButton.addEventListener("click", () => stopCamera());
 clearButton.addEventListener("click", clearScores);
-clearFaceDataButton.addEventListener("click", forgetFaceData);
 window.addEventListener("pagehide", () => stopCamera("Camera closed."));
 
 updatePointControls(false);
