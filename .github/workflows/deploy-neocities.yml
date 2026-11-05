@@ -18,16 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out site files
-        uses: actions/checkout@v7
-
-      - name: Add deployment version to module URLs
-        env:
-          DEPLOY_VERSION: ${{ github.sha }}
-        run: |
-          sed -i "s#./app.js#./app.js?v=$DEPLOY_VERSION#" index.html
-          sed -i "s#./face-tracking.js#./face-tracking.js?v=$DEPLOY_VERSION#" app.js
-          sed -i "s#./hand-tracking.js#./hand-tracking.js?v=$DEPLOY_VERSION#" app.js
-          sed -i "s#./pose-tracking.js#./pose-tracking.js?v=$DEPLOY_VERSION#" app.js
+        uses: actions/checkout@v4
 
       - name: Upload site to Neocities
         env:
