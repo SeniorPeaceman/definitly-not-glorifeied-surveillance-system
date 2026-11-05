@@ -3,31 +3,20 @@ import {
   FilesetResolver,
 } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
 import {
+  classifyFace,
   createFaceLandmarker,
   drawFaceMesh,
-  getFaceBounds,
-} from "./face-tracking.js?v=2";
+} from "./face-tracking.js";
 import {
   classifyGesture,
   createHandLandmarker,
   drawHands,
-} from "./hand-tracking.js?v=2";
-import {
-  classifyPose,
-  createPoseLandmarker,
-  drawPose,
-} from "./pose-tracking.js?v=2";
+} from "./hand-tracking.js";
 
 // Configure model limits and the tracking update rate.
 const MAX_FACES = 5;
-const MAX_HANDS = 8;
+const MAX_HANDS = 4;
 const INFERENCE_INTERVAL_MS = 1000 / 15;
-const FACE_TRACK_GRACE_MS = 750;
-const FACE_MATCH_DISTANCE = 0.18;
-const HAND_WRIST_MATCH_DISTANCE = 0.2;
-const POINT_COOLDOWN_MS = 1200;
-const FACE_NUMBER_STORAGE_KEY = "face-game-next-number";
-const POINT_SETTINGS_STORAGE_KEY = "face-game-point-settings";
 const WASM_URL =
   "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm";
 
@@ -37,247 +26,93 @@ const stopButton = document.querySelector("#stop-button");
 const statusElement = document.querySelector("#status");
 const faceCountElement = document.querySelector("#face-count");
 const handCountElement = document.querySelector("#hand-count");
-const poseCountElement = document.querySelector("#pose-count");
 const video = document.querySelector("#camera");
 const meshCanvas = document.querySelector("#tracking-overlay");
 const meshContext = meshCanvas.getContext("2d");
-const faceLabels = document.querySelector("#face-labels");
-const trackedFaceList = document.querySelector("#tracked-face-list");
-const pointControls = [
-  { key: "fist", input: document.querySelector("#points-fist"), output: document.querySelector("#points-fist-value") },
-  { key: "raised-fist", input: document.querySelector("#points-raised-fist"), output: document.querySelector("#points-raised-fist-value") },
-  { key: "middle-finger", input: document.querySelector("#points-middle-finger"), output: document.querySelector("#points-middle-finger-value") },
-  { key: "both-arms-raised", input: document.querySelector("#points-both-arms-raised"), output: document.querySelector("#points-both-arms-raised-value") },
+const scoreControls = [
+  { selector: "#weight-fist", output: "#weight-fist-value" },
+  { selector: "#weight-raised-fist", output: "#weight-raised-fist-value" },
+  { selector: "#weight-middle-finger", output: "#weight-middle-finger-value" },
+  { selector: "#weight-open-mouth", output: "#weight-open-mouth-value" },
+  { selector: "#weight-lowered-brows", output: "#weight-lowered-brows-value" },
 ];
+const operatorBias = document.querySelector("#operator-bias");
+const operatorBiasValue = document.querySelector("#operator-bias-value");
+const liveScore = document.querySelector("#live-score");
+const trackedHandList = document.querySelector("#tracked-hand-list");
+const trackedFaceList = document.querySelector("#tracked-face-list");
 
-// Keep detections and points in memory; storage contains only a number counter and settings.
+// Keep reusable models, camera state, and the latest in-memory cue results.
 let faceLandmarker;
 let handLandmarker;
-let poseLandmarker;
-let poseTrackingError;
 const drawingUtils = new DrawingUtils(meshContext);
 let cameraStream;
 let animationFrameId;
 let lastInferenceAt = 0;
-let faceTracks = [];
-let nextFaceNumber = readNextFaceNumber();
-const sessionScores = new Map();
+let trackedGestures = [];
+let trackedFaceCues = [];
 
-function readNextFaceNumber() {
-  try {
-    const storedNumber = Number(localStorage.getItem(FACE_NUMBER_STORAGE_KEY));
-    return Number.isSafeInteger(storedNumber) && storedNumber > 0 ? storedNumber : 1;
-  } catch {
-    return 1;
-  }
+// Remove samples saved by older versions; current tracking results stay in memory.
+try {
+  localStorage.removeItem("mediapipe-face-detections");
+} catch (error) {
+  statusElement.textContent = `Could not remove previously saved detections: ${error.message}`;
 }
 
-function saveNextFaceNumber() {
-  try {
-    localStorage.setItem(FACE_NUMBER_STORAGE_KEY, String(nextFaceNumber));
-  } catch {
-    // Numbering still works for the current page if storage is unavailable.
-  }
-}
-
-function loadPointSettings() {
-  let savedSettings = {};
-  try {
-    const parsedSettings = JSON.parse(localStorage.getItem(POINT_SETTINGS_STORAGE_KEY) || "{}");
-    if (parsedSettings && typeof parsedSettings === "object" && !Array.isArray(parsedSettings)) {
-      savedSettings = parsedSettings;
-    }
-  } catch {
-    savedSettings = {};
-  }
-
-  for (const control of pointControls) {
-    const savedValue = Number(savedSettings[control.key]);
-    if (Number.isFinite(savedValue)) {
-      control.input.value = String(Math.max(0, Math.min(10, Math.round(savedValue))));
-    }
-    control.output.value = `${control.input.value} pts`;
-  }
-}
-
-function savePointSettings() {
-  try {
-    const settings = Object.fromEntries(
-      pointControls.map(({ key, input }) => [key, Number(input.value)]),
-    );
-    localStorage.setItem(POINT_SETTINGS_STORAGE_KEY, JSON.stringify(settings));
-  } catch {
-    // Controls remain usable for the current page if storage is unavailable.
-  }
-}
-
-function updateFaceTracks(faceLandmarks, now) {
-  const bounds = faceLandmarks.map(getFaceBounds);
-  const availableTracks = faceTracks.filter(
-    (track) => now - track.lastSeen <= FACE_TRACK_GRACE_MS,
+// Apply configured cue weights and, for the overall live score, the operator bias.
+function getCueScore(cues, includeOperatorBias = true) {
+  const weightedCues = cues.reduce(
+    (total, cue) => total + Number(document.querySelector(cue.weight).value),
+    0,
   );
-  const candidates = [];
-
-  bounds.forEach((face, faceIndex) => {
-    availableTracks.forEach((track) => {
-      const distance = Math.hypot(face.centerX - track.centerX, face.centerY - track.centerY);
-      if (distance <= FACE_MATCH_DISTANCE) candidates.push({ faceIndex, track, distance });
-    });
-  });
-  candidates.sort((first, second) => first.distance - second.distance);
-
-  const assigned = new Array(bounds.length);
-  const assignedFaces = new Set();
-  const assignedTracks = new Set();
-  for (const candidate of candidates) {
-    if (assignedFaces.has(candidate.faceIndex) || assignedTracks.has(candidate.track)) continue;
-    assigned[candidate.faceIndex] = candidate.track;
-    assignedFaces.add(candidate.faceIndex);
-    assignedTracks.add(candidate.track);
-  }
-
-  bounds.forEach((face, faceIndex) => {
-    let track = assigned[faceIndex];
-    if (!track) {
-      track = { id: nextFaceNumber++ };
-      assigned[faceIndex] = track;
-      availableTracks.push(track);
-      saveNextFaceNumber();
-    }
-    track.centerX = face.centerX;
-    track.centerY = face.centerY;
-    track.lastSeen = now;
-    track.bounds = face;
-  });
-
-  faceTracks = availableTracks;
-  return assigned.map((track) => ({ id: track.id, bounds: track.bounds }));
+  const bias = includeOperatorBias ? Number(operatorBias.value) : 0;
+  return Math.min(1, bias + weightedCues);
 }
 
-function matchPosesToFaces(currentFaces, poses) {
-  const candidates = [];
-  currentFaces.forEach((face, faceIndex) => {
-    poses.forEach((landmarks, poseIndex) => {
-      const nose = landmarks[0];
-      if (!nose || (nose.visibility ?? 1) < 0.25) return;
-      const distance = Math.hypot(
-        face.bounds.centerX - nose.x,
-        face.bounds.centerY - nose.y,
-      );
-      if (distance <= 0.2) candidates.push({ faceIndex, poseIndex, distance });
-    });
-  });
-  candidates.sort((first, second) => first.distance - second.distance);
-
-  const poseByFace = new Map();
-  const usedFaces = new Set();
-  const usedPoses = new Set();
-  for (const candidate of candidates) {
-    if (usedFaces.has(candidate.faceIndex) || usedPoses.has(candidate.poseIndex)) continue;
-    poseByFace.set(candidate.faceIndex, candidate.poseIndex);
-    usedFaces.add(candidate.faceIndex);
-    usedPoses.add(candidate.poseIndex);
-  }
-  return poseByFace;
-}
-
-function matchHandsToPoses(handLandmarks, poses) {
-  const cuesByPose = poses.map(() => []);
-  for (const hand of handLandmarks) {
-    const cue = classifyGesture(hand);
-    if (!cue) continue;
-
-    const wrist = hand[0];
-    let bestPoseIndex = -1;
-    let bestDistance = HAND_WRIST_MATCH_DISTANCE;
-    poses.forEach((pose, poseIndex) => {
-      for (const wristIndex of [15, 16]) {
-        const poseWrist = pose[wristIndex];
-        if (!poseWrist || (poseWrist.visibility ?? 1) < 0.25) continue;
-        const distance = Math.hypot(wrist.x - poseWrist.x, wrist.y - poseWrist.y);
-        if (distance < bestDistance) {
-          bestDistance = distance;
-          bestPoseIndex = poseIndex;
-        }
-      }
-    });
-    if (bestPoseIndex >= 0) cuesByPose[bestPoseIndex].push(cue);
-  }
-  return cuesByPose;
-}
-
-function getSessionScore(faceNumber) {
-  if (!sessionScores.has(faceNumber)) {
-    sessionScores.set(faceNumber, {
-      points: 0,
-      activeCueKeys: new Set(),
-      lastAwardedAt: new Map(),
-      cueLabels: [],
-    });
-  }
-  return sessionScores.get(faceNumber);
-}
-
-function updateGameScores(currentFaces, poseResult, handResult, now) {
-  const poses = poseResult.landmarks;
-  const poseByFace = matchPosesToFaces(currentFaces, poses);
-  const handCuesByPose = matchHandsToPoses(handResult.landmarks, poses);
-  const visibleFaces = new Set();
-
-  currentFaces.forEach((face, faceIndex) => {
-    visibleFaces.add(face.id);
-    const score = getSessionScore(face.id);
-    const cues = new Map();
-    const poseIndex = poseByFace.get(faceIndex);
-    if (poseIndex !== undefined) {
-      for (const cue of classifyPose(poses[poseIndex])) cues.set(cue.key, cue.label);
-      for (const cue of handCuesByPose[poseIndex]) cues.set(cue.key, cue.label);
-    }
-
-    for (const key of cues.keys()) {
-      if (score.activeCueKeys.has(key)) continue;
-      const lastAwardedAt = score.lastAwardedAt.get(key) ?? -Infinity;
-      if (now - lastAwardedAt < POINT_COOLDOWN_MS) continue;
-      const control = pointControls.find((candidate) => candidate.key === key);
-      if (!control) continue;
-      score.points += Number(control.input.value);
-      score.lastAwardedAt.set(key, now);
-    }
-    score.activeCueKeys = new Set(cues.keys());
-    score.cueLabels = [...cues.values()];
-  });
-
-  for (const [faceNumber, score] of sessionScores) {
-    if (visibleFaces.has(faceNumber)) continue;
-    score.activeCueKeys.clear();
-    score.cueLabels = [];
-  }
-
-  renderScoreboard(visibleFaces);
-}
-
-function renderScoreboard(visibleFaces) {
+// Refresh the live face/hand cue lists and show the highest current score.
+function updateLiveScores() {
+  trackedHandList.replaceChildren();
   trackedFaceList.replaceChildren();
-  const sortedScores = [...sessionScores.entries()].sort(([first], [second]) => first - second);
-  for (const [faceNumber, score] of sortedScores) {
+  const scores = [];
+
+  for (const [index, gesture] of trackedGestures.entries()) {
+    if (!gesture) continue;
+
+    const score = getCueScore([gesture]);
+    scores.push(score);
+
     const item = document.createElement("li");
-    const presence = visibleFaces.has(faceNumber) ? "" : " (out of frame)";
-    const cues = score.cueLabels.length > 0 ? ` - ${score.cueLabels.join(", ")}` : "";
-    item.textContent = `Face ${faceNumber}: ${score.points} points${presence}${cues}`;
+    item.textContent = `Hand ${index + 1}: ${gesture.label} — ${score.toFixed(2)}`;
+    trackedHandList.append(item);
+  }
+
+  for (const [index, cues] of trackedFaceCues.entries()) {
+    const cueScore = getCueScore(cues, false);
+    if (cues.length > 0) {
+      scores.push(getCueScore(cues));
+    }
+
+    const item = document.createElement("li");
+    const cueLabels = cues.map(({ label }) => label);
+    const cueSummary = cueLabels.length > 0 ? cueLabels.join(", ") : "No configured cues";
+    item.textContent = `Face ${index + 1}: ${cueSummary} — ${cueScore.toFixed(2)} / 1`;
     trackedFaceList.append(item);
   }
+
+  liveScore.value = scores.length > 0
+    ? Math.max(...scores).toFixed(2)
+    : trackedGestures.length > 0 || trackedFaceCues.length > 0
+      ? "No weighted cues"
+      : "No faces or hands detected";
 }
 
-function renderFaceLabels(currentFaces) {
-  const labels = currentFaces.map(({ id, bounds }) => {
-    const label = document.createElement("span");
-    label.className = "face-label";
-    label.textContent = `Face ${id}`;
-    label.style.left = `${Math.max(0, (1 - bounds.right) * 100)}%`;
-    label.style.top = `${Math.max(0, bounds.top * 100)}%`;
-    return label;
-  });
-  faceLabels.replaceChildren(...labels);
+// Mirror slider values in their outputs and recalculate live scores.
+function updateScoreControls() {
+  for (const { selector, output } of scoreControls) {
+    document.querySelector(output).value = Number(document.querySelector(selector).value).toFixed(2);
+  }
+  operatorBiasValue.value = Number(operatorBias.value).toFixed(2);
+  updateLiveScores();
 }
 
 // Display a message in the page's accessible status area.
@@ -285,19 +120,7 @@ function setStatus(message) {
   statusElement.textContent = message;
 }
 
-function disablePoseTracking(error) {
-  poseTrackingError = error.message;
-  try {
-    poseLandmarker?.close();
-  } catch {
-    // Keep face and hand tracking available even if pose cleanup fails.
-  }
-  poseLandmarker = undefined;
-  poseCountElement.value = "0";
-  setStatus(`Camera running. Face and hand tracking are live. Pose tracking unavailable: ${poseTrackingError}`);
-}
-
-// Run face, hand, and pose inference and update this session's game board.
+// Run face and hand inference and update the live overlay, counts, and scores.
 function detectFrame() {
   if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
     animationFrameId = requestAnimationFrame(detectFrame);
@@ -314,33 +137,20 @@ function detectFrame() {
   try {
     const faceResult = faceLandmarker.detectForVideo(video, now);
     const handResult = handLandmarker.detectForVideo(video, now);
-    let poseResult = { landmarks: [] };
-    if (poseLandmarker) {
-      try {
-        poseResult = poseLandmarker.detectForVideo(video, now);
-      } catch (error) {
-        disablePoseTracking(error);
-      }
-    }
     faceCountElement.value = String(faceResult.faceLandmarks.length);
     handCountElement.value = String(handResult.landmarks.length);
-    poseCountElement.value = String(poseResult.landmarks.length);
-    const currentFaces = updateFaceTracks(faceResult.faceLandmarks, now);
-    updateGameScores(currentFaces, poseResult, handResult, now);
-    renderFaceLabels(currentFaces);
+    trackedGestures = handResult.landmarks.map(classifyGesture);
+    trackedFaceCues = faceResult.faceLandmarks.map((_, index) => {
+      const blendshapes = faceResult.faceBlendshapes[index];
+      return blendshapes ? classifyFace(blendshapes) : [];
+    });
+    updateLiveScores();
     drawFaceMesh(faceResult, video, meshCanvas, meshContext, drawingUtils);
-    if (poseLandmarker) {
-      try {
-        drawPose(poseResult, drawingUtils);
-      } catch (error) {
-        disablePoseTracking(error);
-      }
-    }
     drawHands(handResult, drawingUtils);
 
     if (!cameraStream) return;
   } catch (error) {
-    setStatus(`Face, hand, or pose tracking failed: ${error.message}`);
+    setStatus(`Face or hand tracking failed: ${error.message}`);
     stopCamera();
     return;
   }
@@ -351,7 +161,6 @@ function detectFrame() {
 // Request camera access, initialize any missing models, and start frame processing.
 async function startCamera() {
   startButton.disabled = true;
-  poseTrackingError = undefined;
   setStatus("Requesting camera access…");
 
   try {
@@ -373,8 +182,8 @@ async function startCamera() {
     video.srcObject = cameraStream;
     await video.play();
 
-    if (!faceLandmarker || !handLandmarker || !poseLandmarker) {
-      setStatus("Loading face, hand, and pose trackers…");
+    if (!faceLandmarker || !handLandmarker) {
+      setStatus("Loading face and hand trackers…");
       const vision = await FilesetResolver.forVisionTasks(WASM_URL);
       if (!faceLandmarker) {
         faceLandmarker = await createFaceLandmarker(vision, MAX_FACES);
@@ -382,19 +191,11 @@ async function startCamera() {
       if (!handLandmarker) {
         handLandmarker = await createHandLandmarker(vision, MAX_HANDS);
       }
-      if (!poseLandmarker) {
-        try {
-          poseLandmarker = await createPoseLandmarker(vision, MAX_FACES);
-        } catch (error) {
-          poseTrackingError = error.message;
-        }
-      }
     }
     stopButton.disabled = false;
+    stopButton.disabled = false;
     lastInferenceAt = 0;
-    setStatus(poseTrackingError
-      ? `Camera running. Face and hand tracking are live. Pose tracking unavailable: ${poseTrackingError}`
-      : "Camera running. Face numbers and points last for this camera session.");
+    setStatus("Camera running. Face and hand tracking are live; results are not saved.");
     animationFrameId = requestAnimationFrame(detectFrame);
   } catch (error) {
     stopCamera();
@@ -404,7 +205,7 @@ async function startCamera() {
   }
 }
 
-// Stop frame processing and camera tracks, then reset session IDs and points.
+// Stop frame processing and camera tracks, then reset live page state.
 function stopCamera() {
   if (animationFrameId !== undefined) {
     cancelAnimationFrame(animationFrameId);
@@ -416,26 +217,24 @@ function stopCamera() {
   meshContext.clearRect(0, 0, meshCanvas.width, meshCanvas.height);
   faceCountElement.value = "0";
   handCountElement.value = "0";
-  poseCountElement.value = "0";
-  faceTracks = [];
-  sessionScores.clear();
-  trackedFaceList.replaceChildren();
-  faceLabels.replaceChildren();
+  trackedGestures = [];
+  trackedFaceCues = [];
+  updateLiveScores();
   stopButton.disabled = true;
   startButton.disabled = false;
-  if (statusElement.textContent.startsWith("Camera running.")) {
+  if (statusElement.textContent === "Camera running. Face and hand tracking are live; results are not saved.") {
     setStatus("Camera stopped.");
   }
 }
 
-// Connect the page buttons and point sliders to their actions.
+// Connect the page buttons and weight sliders to their actions.
 startButton.addEventListener("click", startCamera);
 stopButton.addEventListener("click", stopCamera);
 
-loadPointSettings();
-for (const { input, output } of pointControls) {
-  input.addEventListener("input", () => {
-    output.value = `${input.value} pts`;
-    savePointSettings();
-  });
+for (const { selector } of scoreControls) {
+  document.querySelector(selector).addEventListener("input", updateScoreControls);
 }
+operatorBias.addEventListener("input", updateScoreControls);
+
+// Initialize score outputs when the page loads.
+updateScoreControls();
