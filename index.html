@@ -3,86 +3,112 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Face and Hand Tracking</title>
-    <style>
-      #camera-stage {
-        position: relative;
-        width: min(100%, 640px);
-      }
-
-      #camera {
-        display: block;
-        width: 100%;
-        height: auto;
-      }
-
-      #tracking-overlay {
-        position: absolute;
-        inset: 0;
-        width: 100%;
-        height: 100%;
-        pointer-events: none;
-      }
-
-      #camera,
-      #tracking-overlay {
-        transform: scaleX(-1);
-      }
-    </style>
+    <meta name="theme-color" content="#f2f4e9">
+    <title>Bad Behavior Board | Cue Carnival</title>
+    <link rel="stylesheet" href="./game.css">
     <script type="module" src="./app.js"></script>
   </head>
   <body>
-      <h1>hello world</h1>
+    <header class="topbar wrap">
+      <div class="brand"><span class="brand-mark">CC</span><span>Cue Carnival / Camera Game</span></div>
+      <span class="session-tag">Local game session</span>
+    </header>
+
     <main>
-      <h1>Face and Hand Tracking</h1>
-      <p>
-        Tracking runs in your browser. Video, images, and tracking results are
-        not saved.
-      </p>
+      <section class="intro wrap" aria-labelledby="page-title">
+        <div>
+          <p class="eyebrow">Live round // behavior cues</p>
+          <h1 id="page-title">Bad behavior<br><span>board</span></h1>
+        </div>
+        <p class="rule-note">Points are playful reactions to visible pose and expression cues, not a reading of anyone's intent.</p>
+      </section>
 
-      <button id="start-button" type="button">Start camera</button>
-      <button id="stop-button" type="button" disabled>Stop camera</button>
-      <p id="status" role="status" aria-live="polite">Camera stopped.</p>
+      <div class="game-grid wrap">
+        <section aria-labelledby="live-title">
+          <div class="section-head">
+            <h2 id="live-title">The floor</h2>
+            <small>LIVE CAMERA / MIRRORED</small>
+          </div>
+          <div id="camera-stage">
+            <video id="camera" autoplay muted playsinline webkit-playsinline></video>
+            <canvas id="tracking-overlay" aria-label="Live face, hand, and pose tracking overlay"></canvas>
+            <div class="stage-idle" id="stage-idle">
+              <strong>Camera's offstage</strong>
+              <span>START A ROUND WHEN EVERYONE IS READY</span>
+            </div>
+          </div>
+          <div class="camera-actions">
+            <button id="start-button" type="button">Start round</button>
+            <button id="stop-button" type="button" disabled>Stop camera</button>
+            <p id="status" role="status" aria-live="polite">Camera off. Saved scores stay in this browser.</p>
+          </div>
+          <div class="counts" aria-label="Live detection counts">
+            <span>Faces <output id="face-count">0</output></span>
+            <span>Hands <output id="hand-count">0</output></span>
+            <span>Poses <output id="pose-count">0</output></span>
+          </div>
+        </section>
 
-      <h3>Live hand-tracking scores</h3>
-      <ul id="tracked-hand-list" aria-label="Per-hand gesture scores"></ul>
-
-      <h3>Per-face visible-cue scores (current frame)</h3>
-      <p>These scores reflect configured facial cues only; face numbers are not persistent identities.</p>
-      <ul id="tracked-face-list" aria-label="Current-frame per-face visible-cue scores"></ul>
-
-      <p>Highest live score: <output id="live-score">No faces or hands detected</output> / 1</p>
-
-      <div id="camera-stage">
-        <video id="camera" autoplay muted playsinline webkit-playsinline></video>
-        <canvas id="tracking-overlay" aria-label="Live face and hand tracking overlay"></canvas>
+        <section aria-labelledby="board-title">
+          <div class="section-head board-head">
+            <h2 id="board-title">Pointboard</h2>
+            <button id="clear-scores-button" type="button">Clear points</button>
+          </div>
+          <ol id="score-list" aria-label="Face game points"></ol>
+        </section>
       </div>
 
-      <h3>Hand cue weights</h3>
-      <label for="weight-fist">Fist weight (0–1)</label>
-      <input id="weight-fist" type="range" min="0" max="1" step="0.01" value="0.25">
-      <output id="weight-fist-value" for="weight-fist">0.25</output><br>
-      <label for="weight-raised-fist">Raised fist proxy weight (0–1)</label>
-      <input id="weight-raised-fist" type="range" min="0" max="1" step="0.01" value="0.5">
-      <output id="weight-raised-fist-value" for="weight-raised-fist">0.50</output><br>
-      <label for="weight-middle-finger">Middle finger weight (0–1)</label>
-      <input id="weight-middle-finger" type="range" min="0" max="1" step="0.01" value="0.35">
-      <output id="weight-middle-finger-value" for="weight-middle-finger">0.35</output>
-
-      <h3>Face cue weights</h3>
-      <label for="weight-open-mouth">Wide open mouth weight (0–1)</label>
-      <input id="weight-open-mouth" type="range" min="0" max="1" step="0.01" value="0.35">
-      <output id="weight-open-mouth-value" for="weight-open-mouth">0.35</output><br>
-      <label for="weight-lowered-brows">Lowered brows (frown proxy) weight (0–1)</label>
-      <input id="weight-lowered-brows" type="range" min="0" max="1" step="0.01" value="0.3">
-      <output id="weight-lowered-brows-value" for="weight-lowered-brows">0.30</output><br>
-
-      <label for="operator-bias">Operator bias (0–1)</label>
-      <input id="operator-bias" type="range" min="0" max="1" step="0.01" value="0">
-      <output id="operator-bias-value" for="operator-bias">0.00</output>
-
-      <p>Faces currently detected: <output id="face-count">0</output></p>
-      <p>Hands currently detected: <output id="hand-count">0</output></p>
+      <section class="tuning-band" aria-labelledby="tuning-title">
+        <div class="tuning-inner wrap">
+          <div>
+            <p class="section-kicker">House rules / 01</p>
+            <h2 id="tuning-title">Set the points</h2>
+            <p class="tuning-copy">Each cue scores once when it appears, with a short repeat cooldown. Adjust any cue from zero to ten points.</p>
+          </div>
+          <div class="point-controls">
+            <div class="point-control">
+              <label for="points-fist">Fist</label>
+              <input id="points-fist" type="range" min="0" max="10" step="1" value="2">
+              <output id="points-fist-value" for="points-fist">+2</output>
+            </div>
+            <div class="point-control">
+              <label for="points-raised-fist">Raised fist</label>
+              <input id="points-raised-fist" type="range" min="0" max="10" step="1" value="3">
+              <output id="points-raised-fist-value" for="points-raised-fist">+3</output>
+            </div>
+            <div class="point-control">
+              <label for="points-middle-finger">Middle finger</label>
+              <input id="points-middle-finger" type="range" min="0" max="10" step="1" value="5">
+              <output id="points-middle-finger-value" for="points-middle-finger">+5</output>
+            </div>
+            <div class="point-control">
+              <label for="points-open-mouth">Open mouth</label>
+              <input id="points-open-mouth" type="range" min="0" max="10" step="1" value="1">
+              <output id="points-open-mouth-value" for="points-open-mouth">+1</output>
+            </div>
+            <div class="point-control">
+              <label for="points-lowered-brows">Lowered brows</label>
+              <input id="points-lowered-brows" type="range" min="0" max="10" step="1" value="1">
+              <output id="points-lowered-brows-value" for="points-lowered-brows">+1</output>
+            </div>
+            <div class="point-control">
+              <label for="points-both-arms-raised">Both arms raised</label>
+              <input id="points-both-arms-raised" type="range" min="0" max="10" step="1" value="2">
+              <output id="points-both-arms-raised-value" for="points-both-arms-raised">+2</output>
+            </div>
+            <div class="point-control">
+              <label for="points-arms-spread">Arms spread</label>
+              <input id="points-arms-spread" type="range" min="0" max="10" step="1" value="2">
+              <output id="points-arms-spread-value" for="points-arms-spread">+2</output>
+            </div>
+          </div>
+        </div>
+      </section>
     </main>
+
+    <footer class="footer-note wrap">
+      <span>VIDEO IS PROCESSED IN THIS BROWSER. NO IMAGES OR FACE TEMPLATES ARE SAVED.</span>
+      <span>FACE NUMBERS, POINTS, AND HOUSE RULES SAVE LOCALLY.</span>
+    </footer>
   </body>
 </html>

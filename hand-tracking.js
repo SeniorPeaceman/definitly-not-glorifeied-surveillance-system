@@ -53,13 +53,11 @@ export function classifyGesture(landmarks) {
   const extended = bendAngles.map((angle) => angle !== undefined && angle > 160);
   const middleFingerRaised = extended[1] && curled[0] && curled[2] && curled[3];
 
-  if (middleFingerRaised) return { weight: "#weight-middle-finger", label: "Raised middle finger" };
+  if (middleFingerRaised) return "middle-finger";
   if (curled.every(Boolean)) {
     // Hand height is used as a simple proxy to distinguish a raised fist.
     const upperFrameFist = landmarks[0].y < 0.45;
-    return upperFrameFist
-      ? { weight: "#weight-raised-fist", label: "Raised fist (upper-frame proxy)" }
-      : { weight: "#weight-fist", label: "Fist" };
+    return upperFrameFist ? "raised-fist" : "fist";
   }
   return undefined;
 }

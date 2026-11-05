@@ -32,7 +32,10 @@ jobs:
           curl --fail-with-body --silent --show-error \
             -H "Authorization: Bearer $NEOCITIES_API_KEY" \
             -F "index.html=@index.html" \
+            -F "game.css=@game.css" \
             -F "app.js=@app.js" \
+            -F "game.js=@game.js" \
             -F "face-tracking.js=@face-tracking.js" \
             -F "hand-tracking.js=@hand-tracking.js" \
+            -F "pose-tracking.js=@pose-tracking.js" \
             https://neocities.org/api/upload

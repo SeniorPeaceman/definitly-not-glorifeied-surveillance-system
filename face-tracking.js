@@ -28,35 +28,53 @@ export function classifyFace(blendshapes) {
   );
   const cues = [];
 
-  if (jawOpen >= 0.5) cues.push({ weight: "#weight-open-mouth", label: "Wide open mouth" });
-  if (browDown >= 0.5) cues.push({ weight: "#weight-lowered-brows", label: "Lowered brows (frown proxy)" });
+  if (jawOpen >= 0.5) cues.push("open-mouth");
+  if (browDown >= 0.5) cues.push("lowered-brows");
   return cues;
 }
 
-// Draw facial tessellation and a padded bounding box on the tracking canvas.
-export function drawFaceMesh(result, video, canvas, context, drawingUtils) {
+export function getFaceBounds(landmarks) {
+  const xs = landmarks.map(({ x }) => x);
+  const ys = landmarks.map(({ y }) => y);
+  const left = Math.min(...xs);
+  const top = Math.min(...ys);
+  const right = Math.max(...xs);
+  const bottom = Math.max(...ys);
+
+  return {
+    left,
+    top,
+    right,
+    bottom,
+    centerX: (left + right) / 2,
+    centerY: (top + bottom) / 2,
+    width: right - left,
+    height: bottom - top,
+  };
+}
+
+export function drawFaceMesh(result, video, canvas, context, drawingUtils, faceIds = []) {
   if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
   }
   context.clearRect(0, 0, canvas.width, canvas.height);
 
-  for (const landmarks of result.faceLandmarks) {
+  for (const [index, landmarks] of result.faceLandmarks.entries()) {
     drawingUtils.drawConnectors(
       landmarks,
       FaceLandmarker.FACE_LANDMARKS_TESSELATION,
       { color: "#00ff00", lineWidth: 0.5 },
     );
 
-    const xs = landmarks.map(({ x }) => x * canvas.width);
-    const ys = landmarks.map(({ y }) => y * canvas.height);
-    const left = Math.min(...xs);
-    const top = Math.min(...ys);
-    const right = Math.max(...xs);
-    const bottom = Math.max(...ys);
+    const bounds = getFaceBounds(landmarks);
+    const left = bounds.left * canvas.width;
+    const top = bounds.top * canvas.height;
+    const right = bounds.right * canvas.width;
+    const bottom = bounds.bottom * canvas.height;
     const padding = Math.max(right - left, bottom - top) * 0.05;
 
-    context.strokeStyle = "#ff0000";
+    context.strokeStyle = "#ff6b4a";
     context.lineWidth = Math.max(2, canvas.width / 320);
     context.strokeRect(
       left - padding,
@@ -64,5 +82,22 @@ export function drawFaceMesh(result, video, canvas, context, drawingUtils) {
       right - left + padding * 2,
       bottom - top + padding * 2,
     );
+
+    const label = `FACE ${faceIds[index] ?? index + 1}`;
+    const fontSize = Math.max(14, canvas.width / 34);
+    const labelTop = Math.max(0, top - padding - fontSize - 10);
+    context.font = `700 ${fontSize}px monospace`;
+    context.textBaseline = "middle";
+    const labelWidth = context.measureText(label).width + 16;
+    context.fillStyle = "#ff6b4a";
+    context.fillRect(left - padding, labelTop, labelWidth, fontSize + 8);
+    context.fillStyle = "#17251e";
+    const textLeft = left - padding + 8;
+    const textWidth = context.measureText(label).width;
+    context.save();
+    context.translate(textLeft * 2 + textWidth, 0);
+    context.scale(-1, 1);
+    context.fillText(label, textLeft, labelTop + (fontSize + 8) / 2);
+    context.restore();
   }
 }
