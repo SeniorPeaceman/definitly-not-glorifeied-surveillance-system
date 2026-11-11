@@ -30,13 +30,16 @@ jobs:
             exit 1
           fi
 
+          deploy_dir="$(mktemp -d)"
+          sed 's#\.\./backend/app\.js#./app.js#' frontend/index.html > "$deploy_dir/index.html"
+
           curl --fail-with-body --silent --show-error \
             -H "Authorization: Bearer $NEOCITIES_API_KEY" \
-            -F "index.html=@index.html" \
-            -F "game.css=@game.css" \
-            -F "app.js=@app.js" \
-            -F "game.js=@game.js" \
-            -F "face-tracking.js=@face-tracking.js" \
-            -F "hand-tracking.js=@hand-tracking.js" \
-            -F "pose-tracking.js=@pose-tracking.js" \
+            -F "index.html=@$deploy_dir/index.html" \
+            -F "game.css=@frontend/game.css" \
+            -F "app.js=@backend/app.js" \
+            -F "game.js=@backend/game.js" \
+            -F "face-tracking.js=@backend/face-tracking.js" \
+            -F "hand-tracking.js=@backend/hand-tracking.js" \
+            -F "pose-tracking.js=@backend/pose-tracking.js" \
             https://neocities.org/api/upload
