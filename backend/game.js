@@ -20,9 +20,9 @@ import {
 } from "./pose-tracking.js";
 
 // Set model limits, frame cadence, track lifetime, and per-cue repeat cooldown.
-const MAX_FACES = 5;
-const MAX_HANDS = 4;
-const MAX_POSES = 5;
+const MAX_FACES = 20;
+const MAX_HANDS = 40;
+const MAX_POSES = 20;
 const INFERENCE_INTERVAL_MS = 1000 / 12;
 const TRACK_TIMEOUT_MS = 3500;
 const CUE_COOLDOWN_MS = 1200;
