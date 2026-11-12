@@ -48,12 +48,14 @@ function readSavedGame() {
   try {
     const savedValue = localStorage.getItem(STORAGE_KEY) ?? localStorage.getItem(LEGACY_STORAGE_KEY);
     const saved = JSON.parse(savedValue ?? "null");
-    const storedFaceScores = Array.isArray(saved?.faceScores)
-      ? saved.faceScores.filter((score) => Number.isInteger(score.id) && Number.isFinite(score.points))
+    const storedPlayerScores = Array.isArray(saved?.playerScores)
+      ? saved.playerScores.filter((score) => Number.isInteger(score.id) && Number.isFinite(score.points))
+      : Array.isArray(saved?.faceScores)
+        ? saved.faceScores.filter((score) => Number.isInteger(score.id) && Number.isFinite(score.points))
       : Array.isArray(saved?.players)
         ? saved.players.filter((score) => Number.isInteger(score.id) && Number.isFinite(score.points))
       : [];
-    const faceScores = storedFaceScores.map((score) => {
+    const playerScores = storedPlayerScores.map((score) => {
       const previousAction = typeof score.lastEvent === "string"
         ? score.lastEvent.replace(/\s+\+\d+(?:\.\d+)?$/, "")
         : "";
@@ -77,23 +79,23 @@ function readSavedGame() {
     const unassignedScores = Array.isArray(saved?.unassignedScores)
       ? saved.unassignedScores.filter(Number.isFinite)
       : [];
-    const highestId = faceScores.reduce((highest, score) => Math.max(highest, score.id), 0);
+    const highestId = playerScores.reduce((highest, score) => Math.max(highest, score.id), 0);
     return {
-      nextFaceId: Math.max(highestId + 1, Number(saved?.nextFaceId) || 1),
-      faceScores,
+      nextPlayerId: Math.max(highestId + 1, Number(saved?.nextPlayerId) || Number(saved?.nextFaceId) || 1),
+      playerScores,
       unassignedScores,
       settings: saved?.settings && typeof saved.settings === "object" ? saved.settings : {},
     };
   } catch {
-    return { nextFaceId: 1, faceScores: [], unassignedScores: [], settings: {} };
+    return { nextPlayerId: 1, playerScores: [], unassignedScores: [], settings: {} };
   }
 }
 
 const savedGame = readSavedGame();
-const faceScores = new Map(savedGame.faceScores.map((score) => [score.id, score]));
+const playerScores = new Map(savedGame.playerScores.map((score) => [score.id, score]));
 let unassignedScores = savedGame.unassignedScores;
-// Keep active camera and face-track state in memory; only the scoreboard is persisted.
-let nextFaceId = savedGame.nextFaceId;
+// Keep active pose tracks in memory; only the scoreboard is persisted.
+let nextPlayerId = savedGame.nextPlayerId;
 let storageEnabled = true;
 let faceLandmarker;
 let handLandmarker;
@@ -101,7 +103,7 @@ let poseLandmarker;
 let cameraStream;
 let animationFrameId;
 let lastInferenceAt = 0;
-const faceTracks = new Map();
+const poseTracks = new Map();
 
 // Cache the controls and output elements used by the game page.
 const startButton = document.querySelector("#start-button");
@@ -127,8 +129,8 @@ function saveGame() {
   if (!storageEnabled) return;
 
   try {
-    const savedFaceScores = [...faceScores.values()];
-    const savedData = { nextFaceId, faceScores: savedFaceScores, unassignedScores };
+    const savedPlayerScores = [...playerScores.values()];
+    const savedData = { nextPlayerId, playerScores: savedPlayerScores, unassignedScores };
     savedData.settings = Object.fromEntries(
       CUES.map(({ id, input }) => [id, Number(document.querySelector(`#${input}`).value)]),
     );
@@ -145,19 +147,19 @@ function getPoints(cueId) {
   return cue ? Number(document.querySelector(`#${cue.input}`).value) : 0;
 }
 
-// Create a zero-point score and empty action list for a newly numbered face.
-function ensureFaceScore(id) {
-  if (!faceScores.has(id)) {
-    faceScores.set(id, { id, points: 0, actions: [] });
+// Create a zero-point score and empty action list for a newly numbered player.
+function ensurePlayerScore(id) {
+  if (!playerScores.has(id)) {
+    playerScores.set(id, { id, points: 0, actions: [] });
   }
-  return faceScores.get(id);
+  return playerScores.get(id);
 }
 
-// Render each face's number, point total, and count of each detected action.
+// Render each player's number, point total, and count of each detected action.
 function updateScoreboard() {
   scoreList.replaceChildren();
   const standings = [
-    ...[...faceScores.values()].map((score) => ({ ...score, kind: "face" })),
+    ...[...playerScores.values()].map((score) => ({ ...score, kind: "player" })),
     ...unassignedScores.map((points, index) => ({ points, index, kind: "unassigned" })),
   ].sort((first, second) =>
     second.points - first.points || (first.id ?? Infinity) - (second.id ?? Infinity),
@@ -173,14 +175,14 @@ function updateScoreboard() {
 
   for (const [rank, scoreEntry] of standings.entries()) {
     const item = document.createElement("li");
-    const actions = scoreEntry.kind === "face"
+    const actions = scoreEntry.kind === "player"
       ? Object.entries(scoreEntry.actions)
         .filter(([cueId, count]) => cueById.has(cueId) && count > 0)
         .map(([cueId, count]) => `${cueById.get(cueId).label} (${count})`)
         .join(", ") || "None"
-      : "Unavailable (face number cleared)";
-    item.textContent = scoreEntry.kind === "face"
-      ? `Face (${scoreEntry.id}), Points: ${scoreEntry.points}, List of actions: ${actions}`
+      : "Unavailable (player number cleared)";
+    item.textContent = scoreEntry.kind === "player"
+      ? `Player (${scoreEntry.id}), Points: ${scoreEntry.points}, List of actions: ${actions}`
       : `Unassigned total (${scoreEntry.index + 1}), Points: ${scoreEntry.points}, List of actions: ${actions}`;
     scoreList.append(item);
   }
@@ -260,37 +262,44 @@ function assignMinimumCostPairs(costMatrix) {
   return assignments;
 }
 
-// Match detections to predicted tracks using a global one-to-one set of candidate pairs.
-function matchFaces(faceLandmarks, now) {
-  for (const [id, track] of faceTracks) {
-    if (now - track.lastSeen >= TRACK_TIMEOUT_MS) faceTracks.delete(id);
+// Track people by torso landmarks so player IDs survive face detection changes.
+function matchPoses(poseLandmarks, now) {
+  for (const [id, track] of poseTracks) {
+    if (now - track.lastSeen >= TRACK_TIMEOUT_MS) poseTracks.delete(id);
   }
-  const detections = faceLandmarks.map(getFaceBounds);
-  const tracks = [...faceTracks.values()];
+
+  const detections = poseLandmarks.map((pose) => {
+    const torso = [11, 12, 23, 24].map((index) => pose[index])
+      .filter((point) => point && (point.visibility ?? 1) >= 0.35);
+    if (torso.length < 2) return undefined;
+    const centerX = torso.reduce((total, point) => total + point.x, 0) / torso.length;
+    const centerY = torso.reduce((total, point) => total + point.y, 0) / torso.length;
+    const width = Math.max(...torso.map(({ x }) => x)) - Math.min(...torso.map(({ x }) => x));
+    const height = Math.max(...torso.map(({ y }) => y)) - Math.min(...torso.map(({ y }) => y));
+    return { centerX, centerY, width, height };
+  });
+  const tracks = [...poseTracks.values()];
   const unmatchedCost = 1.05;
   const invalidCost = 100;
   const costMatrix = detections.map((bounds) => {
+    if (!bounds) return [...tracks.map(() => invalidCost), ...new Array(detections.length).fill(unmatchedCost)];
     const trackCosts = tracks.map((track) => {
       const elapsed = Math.min((now - track.lastSeen) / 1000, 0.75);
       const predictedX = track.centerX + track.velocityX * elapsed;
       const predictedY = track.centerY + track.velocityY * elapsed;
       const distance = Math.hypot(bounds.centerX - predictedX, bounds.centerY - predictedY);
-      const speed = Math.hypot(track.velocityX, track.velocityY);
-      const distanceLimit = Math.max(0.08, (bounds.width + track.width) * 0.6)
-        + Math.min(0.12, speed * elapsed * 0.4);
+      const distanceLimit = Math.max(0.12, (bounds.width + track.width) * 0.8);
       if (distance > distanceLimit) return invalidCost;
-
-      const widthChange = Math.abs(Math.log((bounds.width + 0.01) / (track.width + 0.01)));
-      const heightChange = Math.abs(Math.log((bounds.height + 0.01) / (track.height + 0.01)));
-      return (distance / distanceLimit) * 0.75
-        + Math.min(1, (widthChange + heightChange) * 0.4) * 0.25;
+      const sizeChange = Math.abs(Math.log((bounds.height + 0.03) / (track.height + 0.03)));
+      return distance / distanceLimit * 0.8 + Math.min(1, sizeChange) * 0.2;
     });
     return [...trackCosts, ...new Array(detections.length).fill(unmatchedCost)];
   });
   const assignments = assignMinimumCostPairs(costMatrix);
 
-  return detections.map((bounds, detectionIndex) => {
-    const trackIndex = assignments[detectionIndex];
+  return detections.map((bounds, index) => {
+    if (!bounds) return undefined;
+    const trackIndex = assignments[index];
     const track = trackIndex >= 0 && trackIndex < tracks.length ? tracks[trackIndex] : undefined;
     if (track) {
       const elapsed = Math.max((now - track.lastSeen) / 1000, INFERENCE_INTERVAL_MS / 1000);
@@ -298,45 +307,52 @@ function matchFaces(faceLandmarks, now) {
       const measuredVelocityY = (bounds.centerY - track.centerY) / elapsed;
       track.velocityX = track.velocityX * 0.6 + Math.max(-1.5, Math.min(1.5, measuredVelocityX)) * 0.4;
       track.velocityY = track.velocityY * 0.6 + Math.max(-1.5, Math.min(1.5, measuredVelocityY)) * 0.4;
-      track.centerX = bounds.centerX;
-      track.centerY = bounds.centerY;
-      track.width = bounds.width;
-      track.height = bounds.height;
-      track.lastSeen = now;
+      Object.assign(track, bounds, { lastSeen: now });
       return track;
     }
 
     const newTrack = {
-      id: nextFaceId++,
-      centerX: bounds.centerX,
-      centerY: bounds.centerY,
-      width: bounds.width,
-      height: bounds.height,
+      id: nextPlayerId++,
+      ...bounds,
       velocityX: 0,
       velocityY: 0,
       lastSeen: now,
       cueStates: new Map(),
       lastAwardAt: new Map(),
     };
-    faceTracks.set(newTrack.id, newTrack);
-    ensureFaceScore(newTrack.id);
+    poseTracks.set(newTrack.id, newTrack);
+    ensurePlayerScore(newTrack.id);
     saveGame();
     return newTrack;
   });
 }
 
-// Associate a pose head or hand point with the nearest visible face, if close enough.
-function closestFaceId(point, faceLandmarks, tracks, maxDistance) {
+function closestPoseId(point, poseLandmarks, tracks, maxDistance) {
   if (!point) return undefined;
   let closestId;
   let closestDistance = maxDistance;
-
-  for (let index = 0; index < faceLandmarks.length; index += 1) {
-    const bounds = getFaceBounds(faceLandmarks[index]);
-    const distance = Math.hypot(point.x - bounds.centerX, point.y - bounds.centerY);
+  for (const [index, pose] of poseLandmarks.entries()) {
+    const head = poseHead(pose);
+    if (!head || !tracks[index]) continue;
+    const distance = Math.hypot(point.x - head.x, point.y - head.y);
     if (distance < closestDistance) {
       closestDistance = distance;
       closestId = tracks[index].id;
+    }
+  }
+  return closestId;
+}
+
+function closestMappedPlayerId(point, faceLandmarks, facePlayerIds, maxDistance) {
+  if (!point) return undefined;
+  let closestId;
+  let closestDistance = maxDistance;
+  for (const [index, face] of faceLandmarks.entries()) {
+    const bounds = getFaceBounds(face);
+    const distance = Math.hypot(point.x - bounds.centerX, point.y - bounds.centerY);
+    if (distance < closestDistance) {
+      closestDistance = distance;
+      closestId = facePlayerIds[index];
     }
   }
   return closestId;
@@ -352,25 +368,24 @@ function poseHead(pose) {
   };
 }
 
-// Combine facial expressions, body poses, and hand gestures under a face track.
-function collectCueEvents(faceResult, handResult, poseResult, tracks) {
-  const cuesByFace = new Map(tracks.map((track) => [track.id, new Set()]));
-  const addCue = (id, cue) => cuesByFace.get(id)?.add(cue);
+// Combine facial expressions, body poses, and hand gestures under a pose track.
+function collectCueEvents(faceResult, handResult, poseResult, facePlayerIds, playerTracks) {
+  const cuesByPlayer = new Map(playerTracks.filter(Boolean).map((track) => [track.id, new Set()]));
+  const addCue = (id, cue) => cuesByPlayer.get(id)?.add(cue);
 
-  for (const [index, track] of tracks.entries()) {
+  for (const [index, playerId] of facePlayerIds.entries()) {
+    if (playerId === undefined) continue;
     const blendshapes = faceResult.faceBlendshapes[index];
     if (blendshapes) {
-      for (const cue of classifyFace(blendshapes)) addCue(track.id, cue);
+      for (const cue of classifyFace(blendshapes)) addCue(playerId, cue);
     }
   }
 
-  const poseOwners = poseResult.landmarks.map((pose) => {
-    const id = closestFaceId(poseHead(pose), faceResult.faceLandmarks, tracks, 0.3);
-    if (id !== undefined) {
-      for (const cue of classifyPose(pose)) addCue(id, cue);
-      return { id, landmarks: pose };
-    }
-    return undefined;
+  const poseOwners = poseResult.landmarks.map((pose, index) => {
+    const track = playerTracks[index];
+    if (!track) return undefined;
+    for (const cue of classifyPose(pose)) addCue(track.id, cue);
+    return { id: track.id, landmarks: pose };
   });
 
   for (const hand of handResult.landmarks) {
@@ -405,19 +420,19 @@ function collectCueEvents(faceResult, handResult, poseResult, tracks) {
       }
     }
 
-    owner ??= closestFaceId(wrist, faceResult.faceLandmarks, tracks, 0.32);
+    owner ??= closestMappedPlayerId(wrist, faceResult.faceLandmarks, facePlayerIds, 0.32);
     if (owner !== undefined) addCue(owner, cue);
   }
 
-  return cuesByFace;
+  return cuesByPlayer;
 }
 
 // Require two detected frames to activate and two missing frames to end a cue.
-function scoreCueEvents(cuesByFace, now) {
+function scoreCueEvents(cuesByPlayer, now) {
   let changed = false;
-  for (const track of faceTracks.values()) {
-    const detectedCues = cuesByFace.get(track.id) ?? new Set();
-    const faceScore = ensureFaceScore(track.id);
+  for (const track of poseTracks.values()) {
+    const detectedCues = cuesByPlayer.get(track.id) ?? new Set();
+    const playerScore = ensurePlayerScore(track.id);
     const cueIds = new Set([...track.cueStates.keys(), ...detectedCues]);
 
     for (const cueId of cueIds) {
@@ -434,12 +449,12 @@ function scoreCueEvents(cuesByFace, now) {
         state.missingFrames = 0;
         if (!state.active && state.detectedFrames >= 2) {
           state.active = true;
-          faceScore.actions[cueId] = (faceScore.actions[cueId] ?? 0) + 1;
+          playerScore.actions[cueId] = (playerScore.actions[cueId] ?? 0) + 1;
           changed = true;
 
           const lastAwardAt = track.lastAwardAt.get(cueId) ?? -Infinity;
           if (now - lastAwardAt >= CUE_COOLDOWN_MS) {
-            faceScore.points += getPoints(cueId);
+            playerScore.points += getPoints(cueId);
             track.lastAwardAt.set(cueId, now);
             changed = true;
           }
@@ -476,15 +491,30 @@ function detectFrame() {
     const faceResult = faceLandmarker.detectForVideo(video, now);
     const handResult = handLandmarker.detectForVideo(video, now);
     const poseResult = poseLandmarker.detectForVideo(video, now);
-    const tracks = matchFaces(faceResult.faceLandmarks, now);
-    const cuesByFace = collectCueEvents(faceResult, handResult, poseResult, tracks);
+    const playerTracks = matchPoses(poseResult.landmarks, now);
+    const facePlayerIds = faceResult.faceLandmarks.map((face) => {
+      const bounds = getFaceBounds(face);
+      return closestPoseId(
+        { x: bounds.centerX, y: bounds.centerY },
+        poseResult.landmarks,
+        playerTracks,
+        0.3,
+      );
+    });
+    const cuesByPlayer = collectCueEvents(
+      faceResult,
+      handResult,
+      poseResult,
+      facePlayerIds,
+      playerTracks,
+    );
 
     faceCount.value = String(faceResult.faceLandmarks.length);
     handCount.value = String(handResult.landmarks.length);
     poseCount.value = String(poseResult.landmarks.length);
-    scoreCueEvents(cuesByFace, now);
+    scoreCueEvents(cuesByPlayer, now);
 
-    drawFaceMesh(faceResult, video, overlay, overlayContext, drawingUtils, tracks.map((track) => track.id));
+    drawFaceMesh(faceResult, video, overlay, overlayContext, drawingUtils, facePlayerIds);
     drawPoses(poseResult, drawingUtils);
     drawHands(handResult, drawingUtils);
     updateScoreboard();
@@ -530,7 +560,7 @@ async function startCamera() {
 
     stopButton.disabled = false;
     lastInferenceAt = 0;
-    setStatus("Camera live. Points and face numbers are saved on this device only.");
+    setStatus("Camera live. Points and player numbers are saved on this device only.");
     animationFrameId = requestAnimationFrame(detectFrame);
   } catch (error) {
     stopCamera(`Could not start camera or models: ${error.message}`);
@@ -549,7 +579,7 @@ function stopCamera(message = "Camera off. Scores stay saved on this device.") {
   cameraStream = undefined;
   video.srcObject = null;
   overlayContext.clearRect(0, 0, overlay.width, overlay.height);
-  faceTracks.clear();
+  poseTracks.clear();
   faceCount.value = "0";
   handCount.value = "0";
   poseCount.value = "0";
@@ -566,10 +596,10 @@ function deleteSavedData() {
     localStorage.removeItem(LEGACY_STORAGE_KEY);
     storageEnabled = false;
     stopCamera("Saved data deleted. Camera stopped.");
-    faceScores.clear();
+    playerScores.clear();
     unassignedScores = [];
-    nextFaceId = 1;
-    faceTracks.clear();
+    nextPlayerId = 1;
+    poseTracks.clear();
     updateScoreboard();
     setStatus("Saved data deleted. Scores are cleared for this session.");
   } catch {

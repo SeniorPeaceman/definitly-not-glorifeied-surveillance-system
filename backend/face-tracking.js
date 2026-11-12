@@ -34,7 +34,7 @@ export function classifyFace(blendshapes) {
   return cues;
 }
 
-// Return a normalized bounding box and center used to keep a face's track number stable.
+// Return a normalized bounding box and center for matching faces to pose tracks.
 export function getFaceBounds(landmarks) {
   const xs = landmarks.map(({ x }) => x);
   const ys = landmarks.map(({ y }) => y);
@@ -56,7 +56,7 @@ export function getFaceBounds(landmarks) {
 }
 
 // Draw the face mesh, track box, and readable ID label onto the mirrored video overlay.
-export function drawFaceMesh(result, video, canvas, context, drawingUtils, faceIds = []) {
+export function drawFaceMesh(result, video, canvas, context, drawingUtils, playerIds = []) {
   if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
@@ -86,7 +86,7 @@ export function drawFaceMesh(result, video, canvas, context, drawingUtils, faceI
       bottom - top + padding * 2,
     );
 
-    const label = `FACE ${faceIds[index] ?? index + 1}`;
+    const label = `PLAYER ${playerIds[index] ?? "?"}`;
     const fontSize = Math.max(14, canvas.width / 34);
     const labelTop = Math.max(0, top - padding - fontSize - 10);
     context.font = `700 ${fontSize}px monospace`;

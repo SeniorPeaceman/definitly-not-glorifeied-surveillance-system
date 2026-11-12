@@ -13,8 +13,9 @@ The GitHub Actions workflow deploys the site to Neocities on every push to
 
 The HTML page and stylesheet are in `frontend/`; the JavaScript modules are in
 `backend/`. The workflow packages those files into the root-level layout expected
-by Neocities before uploading. Face numbers, totals, and slider settings persist
-in this browser. **Delete saved data** removes this app's local-storage keys and
+by Neocities before uploading. Player numbers, totals, and slider settings persist
+in this browser. Player numbers are assigned from tracked pose skeletons, not face
+tracks. **Delete saved data** removes this app's local-storage keys and
 clears the current scoreboard and camera session without writing zero scores
 back. The app does not save images or face templates and does not identify
 people across separate visits.
