@@ -63,3 +63,31 @@ export function drawPoses(result, drawingUtils) {
     });
   }
 }
+
+export function drawPlayerOutlines(result, canvas, context, tracksByPose) {
+  for (const [index, landmarks] of result.landmarks.entries()) {
+    const bodyPoints = landmarks.slice(11).filter(isVisible);
+    if (bodyPoints.length < 4) continue;
+
+    const track = tracksByPose[index];
+    if (!track) continue;
+    const paddingX = Math.max(...bodyPoints.map(({ x }) => x)) - Math.min(...bodyPoints.map(({ x }) => x));
+    const paddingY = Math.max(...bodyPoints.map(({ y }) => y)) - Math.min(...bodyPoints.map(({ y }) => y));
+    const left = (Math.min(...bodyPoints.map(({ x }) => x)) - paddingX * 0.04) * canvas.width;
+    const top = (Math.min(...bodyPoints.map(({ y }) => y)) - paddingY * 0.04) * canvas.height;
+    const width = (paddingX * 1.08) * canvas.width;
+    const height = (paddingY * 1.08) * canvas.height;
+    const perimeter = 2 * (width + height);
+    const progress = Math.max(0, Math.min(1, track.progress));
+
+    context.save();
+    context.lineWidth = Math.max(3, canvas.width / 240);
+    context.strokeStyle = track.remainingMs === 0 ? "rgba(255, 48, 48, 0.3)" : "rgba(255, 255, 255, 0.25)";
+    context.setLineDash([]);
+    context.strokeRect(left, top, width, height);
+    context.setLineDash([Math.max(0.001, perimeter * progress), perimeter]);
+    context.strokeStyle = track.remainingMs === 0 ? "#ff3030" : "#ffe35a";
+    context.strokeRect(left, top, width, height);
+    context.restore();
+  }
+}

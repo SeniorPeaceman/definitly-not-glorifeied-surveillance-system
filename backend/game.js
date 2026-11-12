@@ -16,6 +16,7 @@ import {
 import {
   classifyPose,
   createPoseLandmarker,
+  drawPlayerOutlines,
   drawPoses,
 } from "./pose-tracking.js";
 
@@ -31,13 +32,8 @@ const STORAGE_KEY = "definitly-not-glorified-surveillance-system-v1";
 const LEGACY_STORAGE_KEY = "cue-carnival-game-v1";
 const WASM_URL =
   "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm";
-const CLOTHING_API_URL = document.querySelector('meta[name="clothing-api-url"]')?.content.trim();
-const CLOTHING_QUERY_INTERVAL_MS = 1500;
-const CAMOUFLAGE_CLASSES = new Set([
-  "yellow-jacket",
-  "plague-doctor-mask",
-  "blue-t-shirt",
-]);
+const OBJECTRON_QUERY_INTERVAL_MS = 250;
+const OBJECT_TRACK_TIMEOUT_MS = 2500;
 
 // Connect each detectable cue to its slider, display label, and default points.
 const CUES = [
@@ -48,6 +44,12 @@ const CUES = [
   { id: "lowered-brows", label: "Lowered brows", input: "points-lowered-brows" },
   { id: "both-arms-raised", label: "Both arms raised", input: "points-both-arms-raised" },
   { id: "arms-spread", label: "Arms spread", input: "points-arms-spread" },
+];
+const OBJECT_BONUSES = [
+  { id: "shoe", modelName: "Shoe", label: "Shoe", input: "seconds-shoe" },
+  { id: "chair", modelName: "Chair", label: "Chair", input: "seconds-chair" },
+  { id: "cup", modelName: "Cup", label: "Cup", input: "seconds-cup" },
+  { id: "camera", modelName: "Camera", label: "Camera", input: "seconds-camera" },
 ];
 const cueById = new Map(CUES.map((cue) => [cue.id, cue]));
 
@@ -109,9 +111,12 @@ let poseLandmarker;
 let cameraStream;
 let animationFrameId;
 let lastInferenceAt = 0;
-let lastClothingInferenceAt = 0;
-let clothingInferenceInFlight = false;
+let lastObjectronInferenceAt = 0;
+let objectronIndex = 0;
+let objectronInferenceInFlight = false;
+let objectronDetectors = [];
 const faceTracks = new Map();
+const objectTracks = new Map(OBJECT_BONUSES.map(({ id }) => [id, []]));
 
 // Cache the controls and output elements used by the game page.
 const startButton = document.querySelector("#start-button");
@@ -122,7 +127,6 @@ const video = document.querySelector("#camera");
 const overlay = document.querySelector("#tracking-overlay");
 const overlayContext = overlay.getContext("2d");
 const criminalAlert = document.querySelector("#criminal-alert");
-const clothingStatus = document.querySelector("#clothing-status");
 const faceCount = document.querySelector("#face-count");
 const handCount = document.querySelector("#hand-count");
 const poseCount = document.querySelector("#pose-count");
@@ -141,9 +145,10 @@ function saveGame() {
   try {
     const savedFaceScores = [...faceScores.values()];
     const savedData = { nextFaceId, faceScores: savedFaceScores, unassignedScores };
-    savedData.settings = Object.fromEntries(
-      CUES.map(({ id, input }) => [id, Number(document.querySelector(`#${input}`).value)]),
-    );
+    savedData.settings = Object.fromEntries([
+      ...CUES.map(({ id, input }) => [id, Number(document.querySelector(`#${input}`).value)]),
+      ...OBJECT_BONUSES.map(({ id, input }) => [`object-${id}`, Number(document.querySelector(`#${input}`).value)]),
+    ]);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(savedData));
     localStorage.removeItem(LEGACY_STORAGE_KEY);
   } catch {
@@ -155,6 +160,11 @@ function saveGame() {
 function getPoints(cueId) {
   const cue = cueById.get(cueId);
   return cue ? Number(document.querySelector(`#${cue.input}`).value) : 0;
+}
+
+function getObjectBonusSeconds(objectId) {
+  const object = OBJECT_BONUSES.find(({ id }) => id === objectId);
+  return object ? Number(document.querySelector(`#${object.input}`).value) : 0;
 }
 
 // Create a zero-point score and empty action list for a newly numbered face.
@@ -204,6 +214,11 @@ function updatePointControls(save = true) {
     const input = document.querySelector(`#${cue.input}`);
     const output = document.querySelector(`#${cue.input}-value`);
     output.value = `+${input.value}`;
+  }
+  for (const object of OBJECT_BONUSES) {
+    const input = document.querySelector(`#${object.input}`);
+    const output = document.querySelector(`#${object.input}-value`);
+    output.value = `+${input.value}s`;
   }
   if (save) saveGame();
 }
@@ -330,7 +345,6 @@ function matchFaces(faceLandmarks, now) {
       timerUpdatedAt: now,
       remainingMs: PLAYER_TIMER_MS,
       elapsedMs: 0,
-      camouflaged: false,
       cueStates: new Map(),
       lastAwardAt: new Map(),
     };
@@ -379,7 +393,7 @@ function updatePlayerTimers(tracks, now) {
   for (const track of tracks) {
     const elapsed = Math.max(0, now - track.timerUpdatedAt);
     track.elapsedMs += elapsed;
-    if (!track.camouflaged) track.remainingMs = Math.max(0, track.remainingMs - elapsed);
+    track.remainingMs = Math.max(0, track.remainingMs - elapsed);
     track.timerUpdatedAt = now;
   }
 }
@@ -392,62 +406,128 @@ function updateCriminalAlert(tracks) {
     : "";
 }
 
-function applyClothingPredictions(result, imageWidth) {
-  const activeTracks = [...faceTracks.values()].filter(
-    (track) => performance.now() - track.lastSeen < TRACK_TIMEOUT_MS,
-  );
-  for (const track of activeTracks) track.camouflaged = false;
+function getObjectBounds(detectedObject) {
+  const points = detectedObject.keypoints
+    ?.map(({ point2d }) => point2d)
+    .filter((point) => point && Number.isFinite(point.x) && Number.isFinite(point.y));
+  if (!points?.length) return undefined;
 
-  const predictions = Array.isArray(result.predictions) ? result.predictions : [];
-  const predictionWidth = Number(result.image?.width) || imageWidth;
-  for (const prediction of predictions) {
-    const className = String(prediction.class ?? "").toLowerCase().replace(/[\s_]+/g, "-");
-    const confidence = Number(prediction.confidence);
-    if (!CAMOUFLAGE_CLASSES.has(className) || !Number.isFinite(confidence) || confidence < 0.55) continue;
-
-    const predictionX = Number(prediction.x) / predictionWidth;
-    if (!Number.isFinite(predictionX)) continue;
-    const owner = activeTracks.reduce((closest, track) => {
-      const distance = Math.abs(track.centerX - predictionX);
-      return !closest || distance < closest.distance ? { track, distance } : closest;
-    }, undefined);
-    if (owner && owner.distance <= Math.max(0.15, owner.track.width * 2.5)) {
-      owner.track.camouflaged = true;
-    }
-  }
+  const left = Math.min(...points.map(({ x }) => x));
+  const right = Math.max(...points.map(({ x }) => x));
+  const top = Math.min(...points.map(({ y }) => y));
+  const bottom = Math.max(...points.map(({ y }) => y));
+  return {
+    left,
+    top,
+    width: right - left,
+    height: bottom - top,
+    centerX: (left + right) / 2,
+    centerY: (top + bottom) / 2,
+  };
 }
 
-async function requestClothingInference(now) {
+function getObjectOwner(bounds, now) {
+  const nearest = [...faceTracks.values()]
+    .filter((track) => now - track.lastSeen < TRACK_TIMEOUT_MS)
+    .map((track) => ({
+      track,
+      distance: Math.hypot(track.centerX - bounds.centerX, (track.centerY - bounds.centerY) * 0.5),
+    }))
+    .sort((first, second) => first.distance - second.distance)[0];
+  return nearest && nearest.distance < 0.55 ? nearest.track : undefined;
+}
+
+function handleObjectronResults(objectId, results) {
+  if (!cameraStream) return;
+  const now = performance.now();
+  const existingTracks = (objectTracks.get(objectId) ?? [])
+    .filter((track) => now - track.lastSeen < OBJECT_TRACK_TIMEOUT_MS);
+  const unmatchedTracks = new Set(existingTracks);
+
+  for (const detection of results.objectDetections ?? []) {
+    const bounds = getObjectBounds(detection);
+    if (!bounds) continue;
+    let closest;
+    let closestDistance = Infinity;
+    for (const track of unmatchedTracks) {
+      const distance = Math.hypot(track.bounds.centerX - bounds.centerX, track.bounds.centerY - bounds.centerY);
+      const matchDistance = Math.max(0.12, Math.hypot(track.bounds.width, track.bounds.height) * 0.35);
+      if (distance < matchDistance && distance < closestDistance) {
+        closest = track;
+        closestDistance = distance;
+      }
+    }
+
+    if (closest) {
+      closest.bounds = bounds;
+      closest.lastSeen = now;
+      unmatchedTracks.delete(closest);
+      continue;
+    }
+
+    const objectTrack = { bounds, lastSeen: now };
+    existingTracks.push(objectTrack);
+    const owner = getObjectOwner(bounds, now);
+    const bonusSeconds = getObjectBonusSeconds(objectId);
+    if (owner && owner.remainingMs > 0 && bonusSeconds > 0) {
+      owner.remainingMs += bonusSeconds * 1000;
+    }
+  }
+
+  objectTracks.set(objectId, existingTracks);
+}
+
+function drawObjectronDetections(context, canvas) {
+  context.save();
+  context.lineWidth = Math.max(2, canvas.width / 400);
+  for (const object of OBJECT_BONUSES) {
+    const tracks = objectTracks.get(object.id) ?? [];
+    for (const track of tracks) {
+      const { left, top, width, height } = track.bounds;
+      context.strokeStyle = "#55e0c0";
+      context.strokeRect(left * canvas.width, top * canvas.height, width * canvas.width, height * canvas.height);
+      context.font = `700 ${Math.max(12, canvas.width / 48)}px monospace`;
+      context.fillStyle = "#55e0c0";
+      context.fillText(object.label.toUpperCase(), left * canvas.width, Math.max(14, top * canvas.height - 4));
+    }
+  }
+  context.restore();
+}
+
+async function initializeObjectron() {
+  if (!window.Objectron) throw new Error("MediaPipe Objectron failed to load.");
+  return Promise.all(OBJECT_BONUSES.map(async (object) => {
+    const detector = new window.Objectron({
+      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/objectron/${file}`,
+    });
+    await detector.setOptions({
+      modelName: object.modelName,
+      maxNumObjects: 3,
+      minDetectionConfidence: 0.5,
+      minTrackingConfidence: 0.75,
+    });
+    detector.onResults((results) => handleObjectronResults(object.id, results));
+    return detector;
+  }));
+}
+
+async function runObjectronFrame(now) {
   if (
-    !CLOTHING_API_URL ||
-    clothingInferenceInFlight ||
-    now - lastClothingInferenceAt < CLOTHING_QUERY_INTERVAL_MS
+    objectronDetectors.length === 0 ||
+    objectronInferenceInFlight ||
+    now - lastObjectronInferenceAt < OBJECTRON_QUERY_INTERVAL_MS
   ) return;
 
-  lastClothingInferenceAt = now;
-  clothingInferenceInFlight = true;
-  const frameCanvas = document.createElement("canvas");
-  frameCanvas.width = 480;
-  frameCanvas.height = Math.round(frameCanvas.width * video.videoHeight / video.videoWidth);
-  const frameContext = frameCanvas.getContext("2d");
-  frameContext.drawImage(video, 0, 0, frameCanvas.width, frameCanvas.height);
-
+  const detector = objectronDetectors[objectronIndex];
+  objectronIndex = (objectronIndex + 1) % objectronDetectors.length;
+  lastObjectronInferenceAt = now;
+  objectronInferenceInFlight = true;
   try {
-    const image = await new Promise((resolve) => frameCanvas.toBlob(resolve, "image/jpeg", 0.65));
-    if (!image) throw new Error("Could not encode camera frame.");
-    const response = await fetch(CLOTHING_API_URL, {
-      method: "POST",
-      headers: { "Content-Type": "image/jpeg" },
-      body: image,
-    });
-    if (!response.ok) throw new Error(`Clothing API returned ${response.status}.`);
-    applyClothingPredictions(await response.json(), frameCanvas.width);
-    clothingStatus.textContent = "Clothing recognition active. Reduced camera frames are sent to Roboflow.";
+    await detector.send({ image: video });
   } catch (error) {
-    clothingStatus.textContent = `Clothing recognition unavailable: ${error.message}`;
+    setStatus(`Objectron stopped: ${error.message}`);
   } finally {
-    clothingStatus.hidden = false;
-    clothingInferenceInFlight = false;
+    objectronInferenceInFlight = false;
   }
 }
 
@@ -579,7 +659,7 @@ function detectFrame() {
     const poseResult = poseLandmarker.detectForVideo(video, now);
     const tracks = matchFaces(faceResult.faceLandmarks, now);
     const cuesByFace = collectCueEvents(faceResult, handResult, poseResult, tracks);
-    requestClothingInference(now);
+    runObjectronFrame(now);
     updatePlayerTimers(tracks, now);
 
     faceCount.value = String(faceResult.faceLandmarks.length);
@@ -589,12 +669,21 @@ function detectFrame() {
 
     drawFaceMesh(faceResult, video, overlay, overlayContext, drawingUtils, tracks.map((track) => ({
       ...track,
-      progress: 1 - track.remainingMs / PLAYER_TIMER_MS,
       remainingLabel: formatDuration(track.remainingMs),
       elapsedLabel: formatDuration(track.elapsedMs),
     })));
     drawPoses(poseResult, drawingUtils);
     drawHands(handResult, drawingUtils);
+    const tracksByPose = poseResult.landmarks.map((pose) => {
+      const ownerId = closestFaceId(poseHead(pose), faceResult.faceLandmarks, tracks, 0.3);
+      const track = tracks.find(({ id }) => id === ownerId);
+      return track ? {
+        ...track,
+        progress: 1 - track.remainingMs / PLAYER_TIMER_MS,
+      } : undefined;
+    });
+    drawPlayerOutlines(poseResult, overlay, overlayContext, tracksByPose);
+    drawObjectronDetections(overlayContext, overlay);
     updateCriminalAlert(tracks);
     updateScoreboard();
   } catch (error) {
@@ -609,10 +698,6 @@ function detectFrame() {
 async function startCamera() {
   startButton.disabled = true;
   setStatus("Waiting for camera permission…");
-  if (CLOTHING_API_URL) {
-    clothingStatus.hidden = false;
-    clothingStatus.textContent = "When the camera is active, reduced frames are sent to Roboflow for clothing recognition.";
-  }
 
   try {
     if (!navigator.mediaDevices?.getUserMedia) {
@@ -641,9 +726,15 @@ async function startCamera() {
       ]);
     }
 
+    if (objectronDetectors.length === 0) {
+      setStatus("Loading MediaPipe Objectron models…");
+      objectronDetectors = await initializeObjectron();
+    }
+
     stopButton.disabled = false;
     lastInferenceAt = 0;
-    setStatus("Camera live. Points and face numbers are saved on this device only.");
+    lastObjectronInferenceAt = 0;
+    setStatus("Camera live. Objectron detects shoes, chairs, cups and cameras. Settings stay on this device.");
     animationFrameId = requestAnimationFrame(detectFrame);
   } catch (error) {
     stopCamera(`Could not start camera or models: ${error.message}`);
@@ -665,6 +756,7 @@ function stopCamera(message = "Camera off. Scores stay saved on this device.") {
   criminalAlert.hidden = true;
   criminalAlert.textContent = "";
   faceTracks.clear();
+  for (const objectId of objectTracks.keys()) objectTracks.set(objectId, []);
   faceCount.value = "0";
   handCount.value = "0";
   poseCount.value = "0";
@@ -697,6 +789,13 @@ for (const cue of CUES) {
   const input = document.querySelector(`#${cue.input}`);
   const savedValue = savedGame.settings[cue.id];
   if (Number.isFinite(savedValue)) input.value = String(Math.max(0, Math.min(10, savedValue)));
+  input.addEventListener("input", updatePointControls);
+}
+
+for (const object of OBJECT_BONUSES) {
+  const input = document.querySelector(`#${object.input}`);
+  const savedValue = savedGame.settings[`object-${object.id}`];
+  if (Number.isFinite(savedValue)) input.value = String(Math.max(0, Math.min(60, savedValue)));
   input.addEventListener("input", updatePointControls);
 }
 

@@ -3,10 +3,10 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="clothing-api-url" content="">
     <title>definitly not glorified surveillance system</title>
     <!-- Keep only the video-feed rules; all other elements use browser defaults. -->
     <link rel="stylesheet" href="./game.css">
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/objectron/objectron.js" crossorigin="anonymous"></script>
     <!-- Start the game after the document is available. -->
     <script type="module" src="../backend/app.js"></script>
   </head>
@@ -20,7 +20,6 @@
           <canvas id="tracking-overlay" aria-label="Live face, hand, and pose tracking overlay"></canvas>
         </div>
         <p id="criminal-alert" role="alert" aria-live="assertive" hidden></p>
-        <p id="clothing-status" aria-live="polite" hidden></p>
         <p>
           <button id="start-button" type="button">Start camera</button>
           <button id="stop-button" type="button" disabled>Stop camera</button>
@@ -49,6 +48,15 @@
         <p><label for="points-lowered-brows">Lowered brows</label> <input id="points-lowered-brows" type="range" min="0" max="10" step="1" value="1"> <output id="points-lowered-brows-value" for="points-lowered-brows">+1</output></p>
         <p><label for="points-both-arms-raised">Both arms raised</label> <input id="points-both-arms-raised" type="range" min="0" max="10" step="1" value="2"> <output id="points-both-arms-raised-value" for="points-both-arms-raised">+2</output></p>
         <p><label for="points-arms-spread">Arms spread</label> <input id="points-arms-spread" type="range" min="0" max="10" step="1" value="2"> <output id="points-arms-spread-value" for="points-arms-spread">+2</output></p>
+      </section>
+
+      <section>
+        <h2>Object timer bonuses</h2>
+        <p>A newly detected object adds its configured seconds to the nearest visible player, once per appearance.</p>
+        <p><label for="seconds-shoe">Shoe</label> <input id="seconds-shoe" type="range" min="0" max="60" step="1" value="10"> <output id="seconds-shoe-value" for="seconds-shoe">+10s</output></p>
+        <p><label for="seconds-chair">Chair</label> <input id="seconds-chair" type="range" min="0" max="60" step="1" value="10"> <output id="seconds-chair-value" for="seconds-chair">+10s</output></p>
+        <p><label for="seconds-cup">Cup</label> <input id="seconds-cup" type="range" min="0" max="60" step="1" value="10"> <output id="seconds-cup-value" for="seconds-cup">+10s</output></p>
+        <p><label for="seconds-camera">Camera</label> <input id="seconds-camera" type="range" min="0" max="60" step="1" value="10"> <output id="seconds-camera-value" for="seconds-camera">+10s</output></p>
       </section>
     </main>
   </body>

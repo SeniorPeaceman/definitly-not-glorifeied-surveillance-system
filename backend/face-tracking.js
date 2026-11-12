@@ -85,17 +85,9 @@ export function drawFaceMesh(result, video, canvas, context, drawingUtils, faceT
     const outlineWidth = right - left + padding * 2;
     const outlineHeight = bottom - top + padding * 2;
     context.strokeRect(outlineLeft, outlineTop, outlineWidth, outlineHeight);
-    if (faceTrack) {
-      const perimeter = 2 * (outlineWidth + outlineHeight);
-      const progress = Math.max(0, Math.min(1, faceTrack.progress));
-      context.setLineDash([Math.max(0.001, perimeter * progress), perimeter]);
-      context.strokeStyle = faceTrack.remainingMs === 0 ? "#ff3030" : "#ffe35a";
-      context.strokeRect(outlineLeft, outlineTop, outlineWidth, outlineHeight);
-      context.setLineDash([]);
-    }
 
     const label = faceTrack
-      ? `FACE ${faceTrack.id} | LEFT ${faceTrack.remainingLabel} | PLAY ${faceTrack.elapsedLabel}${faceTrack.camouflaged ? " | CAMOUFLAGE" : ""}`
+      ? `FACE ${faceTrack.id} | LEFT ${faceTrack.remainingLabel} | PLAY ${faceTrack.elapsedLabel}`
       : `FACE ${index + 1}`;
     const fontSize = Math.max(14, canvas.width / 34);
     const labelTop = Math.max(0, top - padding - fontSize - 10);
