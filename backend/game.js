@@ -272,11 +272,17 @@ function matchPoses(poseLandmarks, now) {
     const torso = [11, 12, 23, 24].map((index) => pose[index])
       .filter((point) => point && (point.visibility ?? 1) >= 0.35);
     if (torso.length < 2) return undefined;
+    const anchors = Object.fromEntries([0, 11, 12, 23, 24].flatMap((pointIndex) => {
+      const point = pose[pointIndex];
+      return point && (point.visibility ?? 1) >= 0.4
+        ? [[pointIndex, { x: point.x, y: point.y }]]
+        : [];
+    }));
     const centerX = torso.reduce((total, point) => total + point.x, 0) / torso.length;
     const centerY = torso.reduce((total, point) => total + point.y, 0) / torso.length;
     const width = Math.max(...torso.map(({ x }) => x)) - Math.min(...torso.map(({ x }) => x));
     const height = Math.max(...torso.map(({ y }) => y)) - Math.min(...torso.map(({ y }) => y));
-    return { centerX, centerY, width, height };
+    return { centerX, centerY, width, height, anchors };
   });
   const tracks = [...poseTracks.values()];
   const unmatchedCost = 1.05;
@@ -287,11 +293,31 @@ function matchPoses(poseLandmarks, now) {
       const elapsed = Math.min((now - track.lastSeen) / 1000, 0.75);
       const predictedX = track.centerX + track.velocityX * elapsed;
       const predictedY = track.centerY + track.velocityY * elapsed;
-      const distance = Math.hypot(bounds.centerX - predictedX, bounds.centerY - predictedY);
-      const distanceLimit = Math.max(0.12, (bounds.width + track.width) * 0.8);
-      if (distance > distanceLimit) return invalidCost;
-      const sizeChange = Math.abs(Math.log((bounds.height + 0.03) / (track.height + 0.03)));
-      return distance / distanceLimit * 0.8 + Math.min(1, sizeChange) * 0.2;
+      const centerDistance = Math.hypot(bounds.centerX - predictedX, bounds.centerY - predictedY);
+      const movement = Math.hypot(track.velocityX, track.velocityY) * elapsed;
+      const centerLimit = Math.max(0.18, (bounds.width + track.width) * 1.1 + movement * 0.5);
+      const anchorDistances = Object.entries(bounds.anchors).flatMap(([key, point]) => {
+        const previous = track.anchors[key];
+        if (!previous) return [];
+        const anchorX = previous.x + previous.velocityX * elapsed;
+        const anchorY = previous.y + previous.velocityY * elapsed;
+        return [Math.hypot(point.x - anchorX, point.y - anchorY)];
+      });
+      const skeletonDistance = anchorDistances.length > 0
+        ? anchorDistances.reduce((total, distance) => total + distance, 0) / anchorDistances.length
+        : centerDistance;
+      const skeletonLimit = Math.max(0.18, Math.hypot(bounds.width + track.width, bounds.height + track.height) * 0.75 + movement * 0.5);
+      if (
+        centerDistance > centerLimit ||
+        (anchorDistances.length >= 2 && skeletonDistance > skeletonLimit)
+      ) return invalidCost;
+
+      const widthChange = Math.abs(Math.log((bounds.width + 0.03) / (track.width + 0.03)));
+      const heightChange = Math.abs(Math.log((bounds.height + 0.03) / (track.height + 0.03)));
+      const shapeChange = Math.min(1, (widthChange + heightChange) * 0.5);
+      return centerDistance / centerLimit * 0.25
+        + skeletonDistance / skeletonLimit * 0.6
+        + shapeChange * 0.15;
     });
     return [...trackCosts, ...new Array(detections.length).fill(unmatchedCost)];
   });
@@ -307,13 +333,34 @@ function matchPoses(poseLandmarks, now) {
       const measuredVelocityY = (bounds.centerY - track.centerY) / elapsed;
       track.velocityX = track.velocityX * 0.6 + Math.max(-1.5, Math.min(1.5, measuredVelocityX)) * 0.4;
       track.velocityY = track.velocityY * 0.6 + Math.max(-1.5, Math.min(1.5, measuredVelocityY)) * 0.4;
-      Object.assign(track, bounds, { lastSeen: now });
+      const anchors = {};
+      for (const [key, point] of Object.entries(bounds.anchors)) {
+        const previous = track.anchors[key];
+        const velocityX = previous ? (point.x - previous.x) / elapsed : 0;
+        const velocityY = previous ? (point.y - previous.y) / elapsed : 0;
+        anchors[key] = {
+          x: point.x,
+          y: point.y,
+          velocityX: previous
+            ? previous.velocityX * 0.6 + Math.max(-1.5, Math.min(1.5, velocityX)) * 0.4
+            : 0,
+          velocityY: previous
+            ? previous.velocityY * 0.6 + Math.max(-1.5, Math.min(1.5, velocityY)) * 0.4
+            : 0,
+        };
+      }
+      Object.assign(track, bounds, { anchors, lastSeen: now });
       return track;
     }
 
     const newTrack = {
       id: nextPlayerId++,
       ...bounds,
+      anchors: Object.fromEntries(Object.entries(bounds.anchors).map(([key, point]) => [key, {
+        ...point,
+        velocityX: 0,
+        velocityY: 0,
+      }])),
       velocityX: 0,
       velocityY: 0,
       lastSeen: now,
@@ -327,20 +374,25 @@ function matchPoses(poseLandmarks, now) {
   });
 }
 
-function closestPoseId(point, poseLandmarks, tracks, maxDistance) {
-  if (!point) return undefined;
-  let closestId;
-  let closestDistance = maxDistance;
-  for (const [index, pose] of poseLandmarks.entries()) {
-    const head = poseHead(pose);
-    if (!head || !tracks[index]) continue;
-    const distance = Math.hypot(point.x - head.x, point.y - head.y);
-    if (distance < closestDistance) {
-      closestDistance = distance;
-      closestId = tracks[index].id;
-    }
-  }
-  return closestId;
+function matchFacesToPlayers(faceLandmarks, poseLandmarks, tracks) {
+  const maxDistance = 0.3;
+  const invalidCost = 100;
+  const costMatrix = faceLandmarks.map((face) => {
+    const bounds = getFaceBounds(face);
+    const poseCosts = poseLandmarks.map((pose, index) => {
+      const head = poseHead(pose);
+      if (!head || !tracks[index]) return invalidCost;
+      const distance = Math.hypot(bounds.centerX - head.x, bounds.centerY - head.y);
+      return distance < maxDistance ? distance : invalidCost;
+    });
+    return [...poseCosts, ...new Array(faceLandmarks.length).fill(maxDistance)];
+  });
+  const assignments = assignMinimumCostPairs(costMatrix);
+  return assignments.map((poseIndex, faceIndex) =>
+    poseIndex >= 0 && poseIndex < tracks.length && costMatrix[faceIndex][poseIndex] < maxDistance
+      ? tracks[poseIndex].id
+      : undefined,
+  );
 }
 
 function closestMappedPlayerId(point, faceLandmarks, facePlayerIds, maxDistance) {
@@ -492,15 +544,11 @@ function detectFrame() {
     const handResult = handLandmarker.detectForVideo(video, now);
     const poseResult = poseLandmarker.detectForVideo(video, now);
     const playerTracks = matchPoses(poseResult.landmarks, now);
-    const facePlayerIds = faceResult.faceLandmarks.map((face) => {
-      const bounds = getFaceBounds(face);
-      return closestPoseId(
-        { x: bounds.centerX, y: bounds.centerY },
-        poseResult.landmarks,
-        playerTracks,
-        0.3,
-      );
-    });
+    const facePlayerIds = matchFacesToPlayers(
+      faceResult.faceLandmarks,
+      poseResult.landmarks,
+      playerTracks,
+    );
     const cuesByPlayer = collectCueEvents(
       faceResult,
       handResult,
