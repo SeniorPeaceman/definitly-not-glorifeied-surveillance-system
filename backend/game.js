@@ -115,6 +115,7 @@ let lastObjectronInferenceAt = 0;
 let objectronIndex = 0;
 let objectronInferenceInFlight = false;
 let objectronDetectors = [];
+let objectronInitializationInFlight = false;
 const faceTracks = new Map();
 const objectTracks = new Map(OBJECT_BONUSES.map(({ id }) => [id, []]));
 
@@ -511,6 +512,24 @@ async function initializeObjectron() {
   }));
 }
 
+async function loadObjectronInBackground() {
+  if (objectronInitializationInFlight || objectronDetectors.length > 0) return;
+  objectronInitializationInFlight = true;
+  try {
+    const detectors = await initializeObjectron();
+    if (!cameraStream) {
+      await Promise.all(detectors.map((detector) => detector.close?.()));
+      return;
+    }
+    objectronDetectors = detectors;
+    setStatus("Camera live. Objectron detects shoes, chairs, cups and cameras.");
+  } catch (error) {
+    if (cameraStream) setStatus(`Camera live; Objectron unavailable: ${error.message}`);
+  } finally {
+    objectronInitializationInFlight = false;
+  }
+}
+
 async function runObjectronFrame(now) {
   if (
     objectronDetectors.length === 0 ||
@@ -726,16 +745,12 @@ async function startCamera() {
       ]);
     }
 
-    if (objectronDetectors.length === 0) {
-      setStatus("Loading MediaPipe Objectron models…");
-      objectronDetectors = await initializeObjectron();
-    }
-
     stopButton.disabled = false;
     lastInferenceAt = 0;
     lastObjectronInferenceAt = 0;
-    setStatus("Camera live. Objectron detects shoes, chairs, cups and cameras. Settings stay on this device.");
+    setStatus("Camera live. Loading Objectron in the background; settings stay on this device.");
     animationFrameId = requestAnimationFrame(detectFrame);
+    loadObjectronInBackground();
   } catch (error) {
     stopCamera(`Could not start camera or models: ${error.message}`);
   } finally {
