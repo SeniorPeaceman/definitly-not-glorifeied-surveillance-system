@@ -56,7 +56,7 @@ export function getFaceBounds(landmarks) {
 }
 
 // Draw the face mesh, track box, and readable ID label onto the mirrored video overlay.
-export function drawFaceMesh(result, video, canvas, context, drawingUtils, faceTracks = []) {
+export function drawFaceMesh(result, video, canvas, context, drawingUtils, faceIds = []) {
   if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
@@ -77,28 +77,25 @@ export function drawFaceMesh(result, video, canvas, context, drawingUtils, faceT
     const bottom = bounds.bottom * canvas.height;
     const padding = Math.max(right - left, bottom - top) * 0.05;
 
-    const faceTrack = faceTracks[index];
-    context.strokeStyle = faceTrack?.remainingMs === 0 ? "#ff3030" : "#ff6b4a";
+    context.strokeStyle = "#ff6b4a";
     context.lineWidth = Math.max(2, canvas.width / 320);
-    const outlineLeft = left - padding;
-    const outlineTop = top - padding;
-    const outlineWidth = right - left + padding * 2;
-    const outlineHeight = bottom - top + padding * 2;
-    context.strokeRect(outlineLeft, outlineTop, outlineWidth, outlineHeight);
+    context.strokeRect(
+      left - padding,
+      top - padding,
+      right - left + padding * 2,
+      bottom - top + padding * 2,
+    );
 
-    const label = faceTrack
-      ? `FACE ${faceTrack.id} | LEFT ${faceTrack.remainingLabel} | PLAY ${faceTrack.elapsedLabel}`
-      : `FACE ${index + 1}`;
+    const label = `FACE ${faceIds[index] ?? index + 1}`;
     const fontSize = Math.max(14, canvas.width / 34);
     const labelTop = Math.max(0, top - padding - fontSize - 10);
     context.font = `700 ${fontSize}px monospace`;
     context.textBaseline = "middle";
     const labelWidth = context.measureText(label).width + 16;
     context.fillStyle = "#ff6b4a";
-    const labelLeft = Math.max(0, Math.min(canvas.width - labelWidth, outlineLeft));
-    context.fillRect(labelLeft, labelTop, labelWidth, fontSize + 8);
+    context.fillRect(left - padding, labelTop, labelWidth, fontSize + 8);
     context.fillStyle = "#17251e";
-    const textLeft = labelLeft + 8;
+    const textLeft = left - padding + 8;
     const textWidth = context.measureText(label).width;
     context.save();
     context.translate(textLeft * 2 + textWidth, 0);

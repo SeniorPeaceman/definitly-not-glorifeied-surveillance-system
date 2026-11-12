@@ -21,13 +21,3 @@
   pointer-events: none;
   transform: scaleX(-1);
 }
-
-#criminal-alert {
-  width: min(100%, 640px);
-  padding: 12px;
-  color: #fff;
-  background: #c62828;
-  font: 700 1.25rem/1.2 sans-serif;
-  text-align: center;
-}
-

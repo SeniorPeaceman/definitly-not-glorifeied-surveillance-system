@@ -16,7 +16,6 @@ import {
 import {
   classifyPose,
   createPoseLandmarker,
-  drawPlayerOutlines,
   drawPoses,
 } from "./pose-tracking.js";
 
@@ -27,13 +26,10 @@ const MAX_POSES = 5;
 const INFERENCE_INTERVAL_MS = 1000 / 12;
 const TRACK_TIMEOUT_MS = 3500;
 const CUE_COOLDOWN_MS = 1200;
-const PLAYER_TIMER_MS = 2 * 60 * 1000;
 const STORAGE_KEY = "definitly-not-glorified-surveillance-system-v1";
 const LEGACY_STORAGE_KEY = "cue-carnival-game-v1";
 const WASM_URL =
   "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm";
-const OBJECTRON_QUERY_INTERVAL_MS = 250;
-const OBJECT_TRACK_TIMEOUT_MS = 2500;
 
 // Connect each detectable cue to its slider, display label, and default points.
 const CUES = [
@@ -44,12 +40,6 @@ const CUES = [
   { id: "lowered-brows", label: "Lowered brows", input: "points-lowered-brows" },
   { id: "both-arms-raised", label: "Both arms raised", input: "points-both-arms-raised" },
   { id: "arms-spread", label: "Arms spread", input: "points-arms-spread" },
-];
-const OBJECT_BONUSES = [
-  { id: "shoe", modelName: "Shoe", label: "Shoe", input: "seconds-shoe" },
-  { id: "chair", modelName: "Chair", label: "Chair", input: "seconds-chair" },
-  { id: "cup", modelName: "Cup", label: "Cup", input: "seconds-cup" },
-  { id: "camera", modelName: "Camera", label: "Camera", input: "seconds-camera" },
 ];
 const cueById = new Map(CUES.map((cue) => [cue.id, cue]));
 
@@ -111,13 +101,7 @@ let poseLandmarker;
 let cameraStream;
 let animationFrameId;
 let lastInferenceAt = 0;
-let lastObjectronInferenceAt = 0;
-let objectronIndex = 0;
-let objectronInferenceInFlight = false;
-let objectronDetectors = [];
-let objectronInitializationInFlight = false;
 const faceTracks = new Map();
-const objectTracks = new Map(OBJECT_BONUSES.map(({ id }) => [id, []]));
 
 // Cache the controls and output elements used by the game page.
 const startButton = document.querySelector("#start-button");
@@ -127,7 +111,6 @@ const statusElement = document.querySelector("#status");
 const video = document.querySelector("#camera");
 const overlay = document.querySelector("#tracking-overlay");
 const overlayContext = overlay.getContext("2d");
-const criminalAlert = document.querySelector("#criminal-alert");
 const faceCount = document.querySelector("#face-count");
 const handCount = document.querySelector("#hand-count");
 const poseCount = document.querySelector("#pose-count");
@@ -146,10 +129,9 @@ function saveGame() {
   try {
     const savedFaceScores = [...faceScores.values()];
     const savedData = { nextFaceId, faceScores: savedFaceScores, unassignedScores };
-    savedData.settings = Object.fromEntries([
-      ...CUES.map(({ id, input }) => [id, Number(document.querySelector(`#${input}`).value)]),
-      ...OBJECT_BONUSES.map(({ id, input }) => [`object-${id}`, Number(document.querySelector(`#${input}`).value)]),
-    ]);
+    savedData.settings = Object.fromEntries(
+      CUES.map(({ id, input }) => [id, Number(document.querySelector(`#${input}`).value)]),
+    );
     localStorage.setItem(STORAGE_KEY, JSON.stringify(savedData));
     localStorage.removeItem(LEGACY_STORAGE_KEY);
   } catch {
@@ -161,11 +143,6 @@ function saveGame() {
 function getPoints(cueId) {
   const cue = cueById.get(cueId);
   return cue ? Number(document.querySelector(`#${cue.input}`).value) : 0;
-}
-
-function getObjectBonusSeconds(objectId) {
-  const object = OBJECT_BONUSES.find(({ id }) => id === objectId);
-  return object ? Number(document.querySelector(`#${object.input}`).value) : 0;
 }
 
 // Create a zero-point score and empty action list for a newly numbered face.
@@ -215,11 +192,6 @@ function updatePointControls(save = true) {
     const input = document.querySelector(`#${cue.input}`);
     const output = document.querySelector(`#${cue.input}-value`);
     output.value = `+${input.value}`;
-  }
-  for (const object of OBJECT_BONUSES) {
-    const input = document.querySelector(`#${object.input}`);
-    const output = document.querySelector(`#${object.input}-value`);
-    output.value = `+${input.value}s`;
   }
   if (save) saveGame();
 }
@@ -343,9 +315,6 @@ function matchFaces(faceLandmarks, now) {
       velocityX: 0,
       velocityY: 0,
       lastSeen: now,
-      timerUpdatedAt: now,
-      remainingMs: PLAYER_TIMER_MS,
-      elapsedMs: 0,
       cueStates: new Map(),
       lastAwardAt: new Map(),
     };
@@ -381,173 +350,6 @@ function poseHead(pose) {
     x: headPoints.reduce((total, point) => total + point.x, 0) / headPoints.length,
     y: headPoints.reduce((total, point) => total + point.y, 0) / headPoints.length,
   };
-}
-
-function formatDuration(milliseconds) {
-  const totalSeconds = Math.ceil(milliseconds / 1000);
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
-}
-
-function updatePlayerTimers(tracks, now) {
-  for (const track of tracks) {
-    const elapsed = Math.max(0, now - track.timerUpdatedAt);
-    track.elapsedMs += elapsed;
-    track.remainingMs = Math.max(0, track.remainingMs - elapsed);
-    track.timerUpdatedAt = now;
-  }
-}
-
-function updateCriminalAlert(tracks) {
-  const recognizedIds = tracks.filter((track) => track.remainingMs === 0).map((track) => track.id);
-  criminalAlert.hidden = recognizedIds.length === 0;
-  criminalAlert.textContent = recognizedIds.length
-    ? `CRIMINAL RECOGNIZED - FACE ${recognizedIds.join(", FACE ")}`
-    : "";
-}
-
-function getObjectBounds(detectedObject) {
-  const points = detectedObject.keypoints
-    ?.map(({ point2d }) => point2d)
-    .filter((point) => point && Number.isFinite(point.x) && Number.isFinite(point.y));
-  if (!points?.length) return undefined;
-
-  const left = Math.min(...points.map(({ x }) => x));
-  const right = Math.max(...points.map(({ x }) => x));
-  const top = Math.min(...points.map(({ y }) => y));
-  const bottom = Math.max(...points.map(({ y }) => y));
-  return {
-    left,
-    top,
-    width: right - left,
-    height: bottom - top,
-    centerX: (left + right) / 2,
-    centerY: (top + bottom) / 2,
-  };
-}
-
-function getObjectOwner(bounds, now) {
-  const nearest = [...faceTracks.values()]
-    .filter((track) => now - track.lastSeen < TRACK_TIMEOUT_MS)
-    .map((track) => ({
-      track,
-      distance: Math.hypot(track.centerX - bounds.centerX, (track.centerY - bounds.centerY) * 0.5),
-    }))
-    .sort((first, second) => first.distance - second.distance)[0];
-  return nearest && nearest.distance < 0.55 ? nearest.track : undefined;
-}
-
-function handleObjectronResults(objectId, results) {
-  if (!cameraStream) return;
-  const now = performance.now();
-  const existingTracks = (objectTracks.get(objectId) ?? [])
-    .filter((track) => now - track.lastSeen < OBJECT_TRACK_TIMEOUT_MS);
-  const unmatchedTracks = new Set(existingTracks);
-
-  for (const detection of results.objectDetections ?? []) {
-    const bounds = getObjectBounds(detection);
-    if (!bounds) continue;
-    let closest;
-    let closestDistance = Infinity;
-    for (const track of unmatchedTracks) {
-      const distance = Math.hypot(track.bounds.centerX - bounds.centerX, track.bounds.centerY - bounds.centerY);
-      const matchDistance = Math.max(0.12, Math.hypot(track.bounds.width, track.bounds.height) * 0.35);
-      if (distance < matchDistance && distance < closestDistance) {
-        closest = track;
-        closestDistance = distance;
-      }
-    }
-
-    if (closest) {
-      closest.bounds = bounds;
-      closest.lastSeen = now;
-      unmatchedTracks.delete(closest);
-      continue;
-    }
-
-    const objectTrack = { bounds, lastSeen: now };
-    existingTracks.push(objectTrack);
-    const owner = getObjectOwner(bounds, now);
-    const bonusSeconds = getObjectBonusSeconds(objectId);
-    if (owner && owner.remainingMs > 0 && bonusSeconds > 0) {
-      owner.remainingMs += bonusSeconds * 1000;
-    }
-  }
-
-  objectTracks.set(objectId, existingTracks);
-}
-
-function drawObjectronDetections(context, canvas) {
-  context.save();
-  context.lineWidth = Math.max(2, canvas.width / 400);
-  for (const object of OBJECT_BONUSES) {
-    const tracks = objectTracks.get(object.id) ?? [];
-    for (const track of tracks) {
-      const { left, top, width, height } = track.bounds;
-      context.strokeStyle = "#55e0c0";
-      context.strokeRect(left * canvas.width, top * canvas.height, width * canvas.width, height * canvas.height);
-      context.font = `700 ${Math.max(12, canvas.width / 48)}px monospace`;
-      context.fillStyle = "#55e0c0";
-      context.fillText(object.label.toUpperCase(), left * canvas.width, Math.max(14, top * canvas.height - 4));
-    }
-  }
-  context.restore();
-}
-
-async function initializeObjectron() {
-  if (!window.Objectron) throw new Error("MediaPipe Objectron failed to load.");
-  return Promise.all(OBJECT_BONUSES.map(async (object) => {
-    const detector = new window.Objectron({
-      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/objectron/${file}`,
-    });
-    await detector.setOptions({
-      modelName: object.modelName,
-      maxNumObjects: 3,
-      minDetectionConfidence: 0.5,
-      minTrackingConfidence: 0.75,
-    });
-    detector.onResults((results) => handleObjectronResults(object.id, results));
-    return detector;
-  }));
-}
-
-async function loadObjectronInBackground() {
-  if (objectronInitializationInFlight || objectronDetectors.length > 0) return;
-  objectronInitializationInFlight = true;
-  try {
-    const detectors = await initializeObjectron();
-    if (!cameraStream) {
-      await Promise.all(detectors.map((detector) => detector.close?.()));
-      return;
-    }
-    objectronDetectors = detectors;
-    setStatus("Camera live. Objectron detects shoes, chairs, cups and cameras.");
-  } catch (error) {
-    if (cameraStream) setStatus(`Camera live; Objectron unavailable: ${error.message}`);
-  } finally {
-    objectronInitializationInFlight = false;
-  }
-}
-
-async function runObjectronFrame(now) {
-  if (
-    objectronDetectors.length === 0 ||
-    objectronInferenceInFlight ||
-    now - lastObjectronInferenceAt < OBJECTRON_QUERY_INTERVAL_MS
-  ) return;
-
-  const detector = objectronDetectors[objectronIndex];
-  objectronIndex = (objectronIndex + 1) % objectronDetectors.length;
-  lastObjectronInferenceAt = now;
-  objectronInferenceInFlight = true;
-  try {
-    await detector.send({ image: video });
-  } catch (error) {
-    setStatus(`Objectron stopped: ${error.message}`);
-  } finally {
-    objectronInferenceInFlight = false;
-  }
 }
 
 // Combine facial expressions, body poses, and hand gestures under a face track.
@@ -637,9 +439,7 @@ function scoreCueEvents(cuesByFace, now) {
 
           const lastAwardAt = track.lastAwardAt.get(cueId) ?? -Infinity;
           if (now - lastAwardAt >= CUE_COOLDOWN_MS) {
-            const cuePoints = getPoints(cueId);
-            faceScore.points += cuePoints;
-            track.remainingMs = Math.max(0, track.remainingMs - cuePoints * 1000);
+            faceScore.points += getPoints(cueId);
             track.lastAwardAt.set(cueId, now);
             changed = true;
           }
@@ -678,32 +478,15 @@ function detectFrame() {
     const poseResult = poseLandmarker.detectForVideo(video, now);
     const tracks = matchFaces(faceResult.faceLandmarks, now);
     const cuesByFace = collectCueEvents(faceResult, handResult, poseResult, tracks);
-    runObjectronFrame(now);
-    updatePlayerTimers(tracks, now);
 
     faceCount.value = String(faceResult.faceLandmarks.length);
     handCount.value = String(handResult.landmarks.length);
     poseCount.value = String(poseResult.landmarks.length);
     scoreCueEvents(cuesByFace, now);
 
-    drawFaceMesh(faceResult, video, overlay, overlayContext, drawingUtils, tracks.map((track) => ({
-      ...track,
-      remainingLabel: formatDuration(track.remainingMs),
-      elapsedLabel: formatDuration(track.elapsedMs),
-    })));
+    drawFaceMesh(faceResult, video, overlay, overlayContext, drawingUtils, tracks.map((track) => track.id));
     drawPoses(poseResult, drawingUtils);
     drawHands(handResult, drawingUtils);
-    const tracksByPose = poseResult.landmarks.map((pose) => {
-      const ownerId = closestFaceId(poseHead(pose), faceResult.faceLandmarks, tracks, 0.3);
-      const track = tracks.find(({ id }) => id === ownerId);
-      return track ? {
-        ...track,
-        progress: 1 - track.remainingMs / PLAYER_TIMER_MS,
-      } : undefined;
-    });
-    drawPlayerOutlines(poseResult, overlay, overlayContext, tracksByPose);
-    drawObjectronDetections(overlayContext, overlay);
-    updateCriminalAlert(tracks);
     updateScoreboard();
   } catch (error) {
     stopCamera(`Tracking stopped: ${error.message}`);
@@ -747,10 +530,8 @@ async function startCamera() {
 
     stopButton.disabled = false;
     lastInferenceAt = 0;
-    lastObjectronInferenceAt = 0;
-    setStatus("Camera live. Loading Objectron in the background; settings stay on this device.");
+    setStatus("Camera live. Points and face numbers are saved on this device only.");
     animationFrameId = requestAnimationFrame(detectFrame);
-    loadObjectronInBackground();
   } catch (error) {
     stopCamera(`Could not start camera or models: ${error.message}`);
   } finally {
@@ -768,10 +549,7 @@ function stopCamera(message = "Camera off. Scores stay saved on this device.") {
   cameraStream = undefined;
   video.srcObject = null;
   overlayContext.clearRect(0, 0, overlay.width, overlay.height);
-  criminalAlert.hidden = true;
-  criminalAlert.textContent = "";
   faceTracks.clear();
-  for (const objectId of objectTracks.keys()) objectTracks.set(objectId, []);
   faceCount.value = "0";
   handCount.value = "0";
   poseCount.value = "0";
@@ -804,13 +582,6 @@ for (const cue of CUES) {
   const input = document.querySelector(`#${cue.input}`);
   const savedValue = savedGame.settings[cue.id];
   if (Number.isFinite(savedValue)) input.value = String(Math.max(0, Math.min(10, savedValue)));
-  input.addEventListener("input", updatePointControls);
-}
-
-for (const object of OBJECT_BONUSES) {
-  const input = document.querySelector(`#${object.input}`);
-  const savedValue = savedGame.settings[`object-${object.id}`];
-  if (Number.isFinite(savedValue)) input.value = String(Math.max(0, Math.min(60, savedValue)));
   input.addEventListener("input", updatePointControls);
 }
 

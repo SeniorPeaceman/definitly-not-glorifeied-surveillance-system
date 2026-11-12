@@ -18,15 +18,3 @@ in this browser. **Delete saved data** removes this app's local-storage keys and
 clears the current scoreboard and camera session without writing zero scores
 back. The app does not save images or face templates and does not identify
 people across separate visits.
-
-## Object timer bonuses
-
-Object detection runs locally in the browser with MediaPipe Objectron. Its
-legacy models only recognize shoes, chairs, cups, and cameras; they do not
-recognize clothing such as jackets or masks. MediaPipe ended support for this
-legacy solution in March 2023, so its CDN assets may not receive future fixes.
-
-Each object category has a seconds slider. A newly detected object adds that
-many seconds to the nearest visible player's remaining timer once per
-appearance. The sliders and scores stay in browser storage; camera frames are
-not sent to an external recognition API.

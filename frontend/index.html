@@ -6,7 +6,6 @@
     <title>definitly not glorified surveillance system</title>
     <!-- Keep only the video-feed rules; all other elements use browser defaults. -->
     <link rel="stylesheet" href="./game.css">
-    <script defer src="https://cdn.jsdelivr.net/npm/@mediapipe/objectron/objectron.js" crossorigin="anonymous"></script>
     <!-- Start the game after the document is available. -->
     <script type="module" src="../backend/app.js"></script>
   </head>
@@ -19,12 +18,10 @@
           <video id="camera" autoplay muted playsinline webkit-playsinline></video>
           <canvas id="tracking-overlay" aria-label="Live face, hand, and pose tracking overlay"></canvas>
         </div>
-        <p id="criminal-alert" role="alert" aria-live="assertive" hidden></p>
         <p>
           <button id="start-button" type="button">Start camera</button>
           <button id="stop-button" type="button" disabled>Stop camera</button>
         </p>
-        <p id="status" role="status" aria-live="polite"></p>
         <p>Faces: <output id="face-count">0</output></p>
         <p>Hands: <output id="hand-count">0</output></p>
         <p>Poses: <output id="pose-count">0</output></p>
@@ -40,7 +37,6 @@
       <!-- Each slider ID is read by game.js as the score for its matching cue. -->
       <section>
         <h2>Points per cue</h2>
-        <p>Each cue adds its configured points and removes the same number of seconds from the remaining timer.</p>
         <p><label for="points-fist">Fist</label> <input id="points-fist" type="range" min="0" max="10" step="1" value="2"> <output id="points-fist-value" for="points-fist">+2</output></p>
         <p><label for="points-raised-fist">Raised fist</label> <input id="points-raised-fist" type="range" min="0" max="10" step="1" value="3"> <output id="points-raised-fist-value" for="points-raised-fist">+3</output></p>
         <p><label for="points-middle-finger">Middle finger</label> <input id="points-middle-finger" type="range" min="0" max="10" step="1" value="5"> <output id="points-middle-finger-value" for="points-middle-finger">+5</output></p>
@@ -48,15 +44,6 @@
         <p><label for="points-lowered-brows">Lowered brows</label> <input id="points-lowered-brows" type="range" min="0" max="10" step="1" value="1"> <output id="points-lowered-brows-value" for="points-lowered-brows">+1</output></p>
         <p><label for="points-both-arms-raised">Both arms raised</label> <input id="points-both-arms-raised" type="range" min="0" max="10" step="1" value="2"> <output id="points-both-arms-raised-value" for="points-both-arms-raised">+2</output></p>
         <p><label for="points-arms-spread">Arms spread</label> <input id="points-arms-spread" type="range" min="0" max="10" step="1" value="2"> <output id="points-arms-spread-value" for="points-arms-spread">+2</output></p>
-      </section>
-
-      <section>
-        <h2>Object timer bonuses</h2>
-        <p>A newly detected object adds its configured seconds to the nearest visible player, once per appearance.</p>
-        <p><label for="seconds-shoe">Shoe</label> <input id="seconds-shoe" type="range" min="0" max="60" step="1" value="10"> <output id="seconds-shoe-value" for="seconds-shoe">+10s</output></p>
-        <p><label for="seconds-chair">Chair</label> <input id="seconds-chair" type="range" min="0" max="60" step="1" value="10"> <output id="seconds-chair-value" for="seconds-chair">+10s</output></p>
-        <p><label for="seconds-cup">Cup</label> <input id="seconds-cup" type="range" min="0" max="60" step="1" value="10"> <output id="seconds-cup-value" for="seconds-cup">+10s</output></p>
-        <p><label for="seconds-camera">Camera</label> <input id="seconds-camera" type="range" min="0" max="60" step="1" value="10"> <output id="seconds-camera-value" for="seconds-camera">+10s</output></p>
       </section>
     </main>
   </body>
