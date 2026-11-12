@@ -26,10 +26,18 @@ const MAX_POSES = 5;
 const INFERENCE_INTERVAL_MS = 1000 / 12;
 const TRACK_TIMEOUT_MS = 3500;
 const CUE_COOLDOWN_MS = 1200;
+const PLAYER_TIMER_MS = 2 * 60 * 1000;
 const STORAGE_KEY = "definitly-not-glorified-surveillance-system-v1";
 const LEGACY_STORAGE_KEY = "cue-carnival-game-v1";
 const WASM_URL =
   "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm";
+const CLOTHING_API_URL = document.querySelector('meta[name="clothing-api-url"]')?.content.trim();
+const CLOTHING_QUERY_INTERVAL_MS = 1500;
+const CAMOUFLAGE_CLASSES = new Set([
+  "yellow-jacket",
+  "plague-doctor-mask",
+  "blue-t-shirt",
+]);
 
 // Connect each detectable cue to its slider, display label, and default points.
 const CUES = [
@@ -101,6 +109,8 @@ let poseLandmarker;
 let cameraStream;
 let animationFrameId;
 let lastInferenceAt = 0;
+let lastClothingInferenceAt = 0;
+let clothingInferenceInFlight = false;
 const faceTracks = new Map();
 
 // Cache the controls and output elements used by the game page.
@@ -111,6 +121,8 @@ const statusElement = document.querySelector("#status");
 const video = document.querySelector("#camera");
 const overlay = document.querySelector("#tracking-overlay");
 const overlayContext = overlay.getContext("2d");
+const criminalAlert = document.querySelector("#criminal-alert");
+const clothingStatus = document.querySelector("#clothing-status");
 const faceCount = document.querySelector("#face-count");
 const handCount = document.querySelector("#hand-count");
 const poseCount = document.querySelector("#pose-count");
@@ -315,6 +327,10 @@ function matchFaces(faceLandmarks, now) {
       velocityX: 0,
       velocityY: 0,
       lastSeen: now,
+      timerUpdatedAt: now,
+      remainingMs: PLAYER_TIMER_MS,
+      elapsedMs: 0,
+      camouflaged: false,
       cueStates: new Map(),
       lastAwardAt: new Map(),
     };
@@ -350,6 +366,89 @@ function poseHead(pose) {
     x: headPoints.reduce((total, point) => total + point.x, 0) / headPoints.length,
     y: headPoints.reduce((total, point) => total + point.y, 0) / headPoints.length,
   };
+}
+
+function formatDuration(milliseconds) {
+  const totalSeconds = Math.ceil(milliseconds / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function updatePlayerTimers(tracks, now) {
+  for (const track of tracks) {
+    const elapsed = Math.max(0, now - track.timerUpdatedAt);
+    track.elapsedMs += elapsed;
+    if (!track.camouflaged) track.remainingMs = Math.max(0, track.remainingMs - elapsed);
+    track.timerUpdatedAt = now;
+  }
+}
+
+function updateCriminalAlert(tracks) {
+  const recognizedIds = tracks.filter((track) => track.remainingMs === 0).map((track) => track.id);
+  criminalAlert.hidden = recognizedIds.length === 0;
+  criminalAlert.textContent = recognizedIds.length
+    ? `CRIMINAL RECOGNIZED - FACE ${recognizedIds.join(", FACE ")}`
+    : "";
+}
+
+function applyClothingPredictions(result, imageWidth) {
+  const activeTracks = [...faceTracks.values()].filter(
+    (track) => performance.now() - track.lastSeen < TRACK_TIMEOUT_MS,
+  );
+  for (const track of activeTracks) track.camouflaged = false;
+
+  const predictions = Array.isArray(result.predictions) ? result.predictions : [];
+  const predictionWidth = Number(result.image?.width) || imageWidth;
+  for (const prediction of predictions) {
+    const className = String(prediction.class ?? "").toLowerCase().replace(/[\s_]+/g, "-");
+    const confidence = Number(prediction.confidence);
+    if (!CAMOUFLAGE_CLASSES.has(className) || !Number.isFinite(confidence) || confidence < 0.55) continue;
+
+    const predictionX = Number(prediction.x) / predictionWidth;
+    if (!Number.isFinite(predictionX)) continue;
+    const owner = activeTracks.reduce((closest, track) => {
+      const distance = Math.abs(track.centerX - predictionX);
+      return !closest || distance < closest.distance ? { track, distance } : closest;
+    }, undefined);
+    if (owner && owner.distance <= Math.max(0.15, owner.track.width * 2.5)) {
+      owner.track.camouflaged = true;
+    }
+  }
+}
+
+async function requestClothingInference(now) {
+  if (
+    !CLOTHING_API_URL ||
+    clothingInferenceInFlight ||
+    now - lastClothingInferenceAt < CLOTHING_QUERY_INTERVAL_MS
+  ) return;
+
+  lastClothingInferenceAt = now;
+  clothingInferenceInFlight = true;
+  const frameCanvas = document.createElement("canvas");
+  frameCanvas.width = 480;
+  frameCanvas.height = Math.round(frameCanvas.width * video.videoHeight / video.videoWidth);
+  const frameContext = frameCanvas.getContext("2d");
+  frameContext.drawImage(video, 0, 0, frameCanvas.width, frameCanvas.height);
+
+  try {
+    const image = await new Promise((resolve) => frameCanvas.toBlob(resolve, "image/jpeg", 0.65));
+    if (!image) throw new Error("Could not encode camera frame.");
+    const response = await fetch(CLOTHING_API_URL, {
+      method: "POST",
+      headers: { "Content-Type": "image/jpeg" },
+      body: image,
+    });
+    if (!response.ok) throw new Error(`Clothing API returned ${response.status}.`);
+    applyClothingPredictions(await response.json(), frameCanvas.width);
+    clothingStatus.textContent = "Clothing recognition active. Reduced camera frames are sent to Roboflow.";
+  } catch (error) {
+    clothingStatus.textContent = `Clothing recognition unavailable: ${error.message}`;
+  } finally {
+    clothingStatus.hidden = false;
+    clothingInferenceInFlight = false;
+  }
 }
 
 // Combine facial expressions, body poses, and hand gestures under a face track.
@@ -439,7 +538,9 @@ function scoreCueEvents(cuesByFace, now) {
 
           const lastAwardAt = track.lastAwardAt.get(cueId) ?? -Infinity;
           if (now - lastAwardAt >= CUE_COOLDOWN_MS) {
-            faceScore.points += getPoints(cueId);
+            const cuePoints = getPoints(cueId);
+            faceScore.points += cuePoints;
+            track.remainingMs = Math.max(0, track.remainingMs - cuePoints * 1000);
             track.lastAwardAt.set(cueId, now);
             changed = true;
           }
@@ -478,15 +579,23 @@ function detectFrame() {
     const poseResult = poseLandmarker.detectForVideo(video, now);
     const tracks = matchFaces(faceResult.faceLandmarks, now);
     const cuesByFace = collectCueEvents(faceResult, handResult, poseResult, tracks);
+    requestClothingInference(now);
+    updatePlayerTimers(tracks, now);
 
     faceCount.value = String(faceResult.faceLandmarks.length);
     handCount.value = String(handResult.landmarks.length);
     poseCount.value = String(poseResult.landmarks.length);
     scoreCueEvents(cuesByFace, now);
 
-    drawFaceMesh(faceResult, video, overlay, overlayContext, drawingUtils, tracks.map((track) => track.id));
+    drawFaceMesh(faceResult, video, overlay, overlayContext, drawingUtils, tracks.map((track) => ({
+      ...track,
+      progress: 1 - track.remainingMs / PLAYER_TIMER_MS,
+      remainingLabel: formatDuration(track.remainingMs),
+      elapsedLabel: formatDuration(track.elapsedMs),
+    })));
     drawPoses(poseResult, drawingUtils);
     drawHands(handResult, drawingUtils);
+    updateCriminalAlert(tracks);
     updateScoreboard();
   } catch (error) {
     stopCamera(`Tracking stopped: ${error.message}`);
@@ -500,6 +609,10 @@ function detectFrame() {
 async function startCamera() {
   startButton.disabled = true;
   setStatus("Waiting for camera permission…");
+  if (CLOTHING_API_URL) {
+    clothingStatus.hidden = false;
+    clothingStatus.textContent = "When the camera is active, reduced frames are sent to Roboflow for clothing recognition.";
+  }
 
   try {
     if (!navigator.mediaDevices?.getUserMedia) {
@@ -549,6 +662,8 @@ function stopCamera(message = "Camera off. Scores stay saved on this device.") {
   cameraStream = undefined;
   video.srcObject = null;
   overlayContext.clearRect(0, 0, overlay.width, overlay.height);
+  criminalAlert.hidden = true;
+  criminalAlert.textContent = "";
   faceTracks.clear();
   faceCount.value = "0";
   handCount.value = "0";

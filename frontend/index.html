@@ -3,6 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="clothing-api-url" content="">
     <title>definitly not glorified surveillance system</title>
     <!-- Keep only the video-feed rules; all other elements use browser defaults. -->
     <link rel="stylesheet" href="./game.css">
@@ -18,10 +19,13 @@
           <video id="camera" autoplay muted playsinline webkit-playsinline></video>
           <canvas id="tracking-overlay" aria-label="Live face, hand, and pose tracking overlay"></canvas>
         </div>
+        <p id="criminal-alert" role="alert" aria-live="assertive" hidden></p>
+        <p id="clothing-status" aria-live="polite" hidden></p>
         <p>
           <button id="start-button" type="button">Start camera</button>
           <button id="stop-button" type="button" disabled>Stop camera</button>
         </p>
+        <p id="status" role="status" aria-live="polite"></p>
         <p>Faces: <output id="face-count">0</output></p>
         <p>Hands: <output id="hand-count">0</output></p>
         <p>Poses: <output id="pose-count">0</output></p>
@@ -37,6 +41,7 @@
       <!-- Each slider ID is read by game.js as the score for its matching cue. -->
       <section>
         <h2>Points per cue</h2>
+        <p>Each cue adds its configured points and removes the same number of seconds from the remaining timer.</p>
         <p><label for="points-fist">Fist</label> <input id="points-fist" type="range" min="0" max="10" step="1" value="2"> <output id="points-fist-value" for="points-fist">+2</output></p>
         <p><label for="points-raised-fist">Raised fist</label> <input id="points-raised-fist" type="range" min="0" max="10" step="1" value="3"> <output id="points-raised-fist-value" for="points-raised-fist">+3</output></p>
         <p><label for="points-middle-finger">Middle finger</label> <input id="points-middle-finger" type="range" min="0" max="10" step="1" value="5"> <output id="points-middle-finger-value" for="points-middle-finger">+5</output></p>

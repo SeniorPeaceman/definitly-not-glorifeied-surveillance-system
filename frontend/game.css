@@ -21,3 +21,17 @@
   pointer-events: none;
   transform: scaleX(-1);
 }
+
+#criminal-alert {
+  width: min(100%, 640px);
+  padding: 12px;
+  color: #fff;
+  background: #c62828;
+  font: 700 1.25rem/1.2 sans-serif;
+  text-align: center;
+}
+
+#clothing-status {
+  width: min(100%, 640px);
+  font: 0.875rem/1.4 sans-serif;
+}
