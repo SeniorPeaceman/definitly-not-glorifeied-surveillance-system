@@ -2,6 +2,7 @@
 #camera-stage {
   position: relative;
   width: min(100%, 640px);
+  overflow: hidden;
 }
 
 /* Mirror the camera to match a typical front-facing webcam preview. */
@@ -20,4 +21,25 @@
   height: 100%;
   pointer-events: none;
   transform: scaleX(-1);
+}
+
+#criminal-alert {
+  position: absolute;
+  z-index: 1;
+  inset: 12px 12px auto;
+  padding: 12px 16px;
+  background: #d71920;
+  color: #fff;
+  font: 800 1rem/1.2 monospace;
+  text-align: center;
+  box-shadow: 0 0 0 3px #fff;
+  animation: alert-flash 700ms steps(2, end) infinite;
+}
+
+@keyframes alert-flash {
+  50% { background: #7d0000; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #criminal-alert { animation: none; }
 }

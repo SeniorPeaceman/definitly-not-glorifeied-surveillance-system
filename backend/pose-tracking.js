@@ -88,6 +88,26 @@ export function drawPlayerOutlines(result, canvas, context, tracksByPose) {
     context.setLineDash([Math.max(0.001, perimeter * progress), perimeter]);
     context.strokeStyle = track.remainingMs === 0 ? "#ff3030" : "#ffe35a";
     context.strokeRect(left, top, width, height);
+
+    const fontSize = Math.max(14, canvas.width / 38);
+    const remainingSeconds = Math.ceil(track.remainingMs / 1000);
+    const elapsedSeconds = Math.floor(track.elapsedMs / 1000);
+    const remainingTime = `${Math.floor(remainingSeconds / 60)}:${String(remainingSeconds % 60).padStart(2, "0")}`;
+    const elapsedTime = `${Math.floor(elapsedSeconds / 60)}:${String(elapsedSeconds % 60).padStart(2, "0")}`;
+    const label = `PLAYER ${track.id}  ${remainingTime}  |  PLAYED ${elapsedTime}`;
+    context.font = `700 ${fontSize}px monospace`;
+    context.textBaseline = "middle";
+    const labelWidth = context.measureText(label).width + 16;
+    const labelTop = Math.max(0, top - fontSize - 12);
+    context.fillStyle = track.remainingMs === 0 ? "#ff3030" : "#ffe35a";
+    context.fillRect(left, labelTop, labelWidth, fontSize + 8);
+    context.fillStyle = "#17251e";
+    context.fillText(label, left + 8, labelTop + (fontSize + 8) / 2);
+
+    if (track.camouflaged) {
+      context.fillStyle = "#65d6ff";
+      context.fillText("CAMOUFLAGE", left, top + height + fontSize);
+    }
     context.restore();
   }
 }
