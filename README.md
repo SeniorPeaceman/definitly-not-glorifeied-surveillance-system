@@ -19,10 +19,3 @@ tracks. **Delete saved data** removes this app's local-storage keys and
 clears the current scoreboard and camera session without writing zero scores
 back. The app does not save images or face templates and does not identify
 people across separate visits.
-A compatible clothing-classification `.tflite` model can be selected on the
-page under **Clothing classifier**. The app crops each player's pose-based torso
-before classifying it. Its clothing class names must include
-a long-sleeve garment label such as `long sleeve top`, `long sleeve outwear`, or
-`sweater`. The app additionally checks the detected garment crop for a dominant
-blue color before awarding the **Blue sweater** cue. The model and camera video
-remain local to the browser.

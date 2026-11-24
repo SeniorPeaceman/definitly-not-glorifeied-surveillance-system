@@ -19,10 +19,6 @@ import {
   createPoseLandmarker,
   drawPoses,
 } from "./pose-tracking.js";
-import {
-  classifyPlayerClothing,
-  createClothingClassifier,
-} from "./clothing-tracking.js";
 
 // Set model limits, frame cadence, track lifetime, and per-cue repeat cooldown.
 const MAX_FACES = 20;
@@ -45,7 +41,6 @@ const CUES = [
   { id: "lowered-brows", label: "Lowered brows", input: "points-lowered-brows" },
   { id: "both-arms-raised", label: "Both arms raised", input: "points-both-arms-raised" },
   { id: "arms-spread", label: "Arms spread", input: "points-arms-spread" },
-  { id: "blue-sweater", label: "Blue sweater", input: "points-blue-sweater" },
 ];
 const cueById = new Map(CUES.map((cue) => [cue.id, cue]));
 
@@ -106,8 +101,6 @@ let storageEnabled = true;
 let faceLandmarker;
 let handLandmarker;
 let poseLandmarker;
-let clothingClassifier;
-let clothingModelBuffer;
 let cameraStream;
 let animationFrameId;
 let lastInferenceAt = 0;
@@ -124,7 +117,6 @@ const overlayContext = overlay.getContext("2d");
 const faceCount = document.querySelector("#face-count");
 const handCount = document.querySelector("#hand-count");
 const poseCount = document.querySelector("#pose-count");
-const clothingModelInput = document.querySelector("#clothing-model-file");
 const scoreList = document.querySelector("#score-list");
 const drawingUtils = new DrawingUtils(overlayContext);
 
@@ -513,7 +505,7 @@ function poseHead(pose) {
 }
 
 // Combine facial expressions, body poses, and hand gestures under a pose track.
-function collectCueEvents(faceResult, handResult, poseResult, clothingResults, facePlayerIds, playerTracks) {
+function collectCueEvents(faceResult, handResult, poseResult, facePlayerIds, playerTracks) {
   const cuesByPlayer = new Map(playerTracks.filter(Boolean).map((track) => [track.id, new Set()]));
   const addCue = (id, cue) => cuesByPlayer.get(id)?.add(cue);
 
@@ -531,8 +523,6 @@ function collectCueEvents(faceResult, handResult, poseResult, clothingResults, f
     for (const cue of classifyPose(pose)) addCue(track.id, cue);
     return { id: track.id, landmarks: pose };
   });
-
-  for (const { playerId } of clothingResults) addCue(playerId, "blue-sweater");
 
   for (const hand of handResult.landmarks) {
     let cue = classifyGesture(hand);
@@ -639,12 +629,6 @@ function detectFrame() {
     const poseResult = poseLandmarker.detectForVideo(video, now);
     syncPlayerTimers(now);
     const playerTracks = matchPoses(poseResult.landmarks, now);
-    const clothingResults = classifyPlayerClothing(
-      clothingClassifier,
-      poseResult.landmarks,
-      playerTracks,
-      video,
-    );
     const facePlayerIds = matchFacesToPlayers(
       faceResult.faceLandmarks,
       poseResult.landmarks,
@@ -654,7 +638,6 @@ function detectFrame() {
       faceResult,
       handResult,
       poseResult,
-      clothingResults,
       facePlayerIds,
       playerTracks,
     );
@@ -708,11 +691,6 @@ async function startCamera() {
         handLandmarker ?? createHandLandmarker(vision, MAX_HANDS),
         poseLandmarker ?? createPoseLandmarker(vision, MAX_POSES),
       ]);
-
-      if (clothingModelBuffer && !clothingClassifier) {
-        setStatus("Loading clothing model…");
-        clothingClassifier = await createClothingClassifier(vision, clothingModelBuffer);
-      }
     }
 
     stopButton.disabled = false;
@@ -797,21 +775,6 @@ for (const cue of CUES) {
 startButton.addEventListener("click", startCamera);
 stopButton.addEventListener("click", () => stopCamera());
 deleteSavedDataButton.addEventListener("click", deleteSavedData);
-clothingModelInput.addEventListener("change", async () => {
-  const file = clothingModelInput.files?.[0];
-  if (!file) return;
-  try {
-    clothingModelBuffer = await file.arrayBuffer();
-    clothingClassifier = undefined;
-    setStatus(`Loading clothing model ${file.name}…`);
-    const vision = await FilesetResolver.forVisionTasks(WASM_URL);
-    clothingClassifier = await createClothingClassifier(vision, clothingModelBuffer);
-    setStatus(`${file.name} loaded. Blue sweater detection is active.`);
-  } catch (error) {
-    clothingClassifier = undefined;
-    setStatus(`Could not load clothing model: ${error.message}`);
-  }
-});
 window.addEventListener("pagehide", () => stopCamera("Camera closed."));
 
 updatePointControls(false);
