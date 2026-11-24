@@ -1,12 +1,13 @@
-import { pipeline } from "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.3";
-
+const TRANSFORMERS_URL = "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.3/dist/transformers.min.js";
 const MODEL_ID = "Xenova/segformer_b2_clothes";
 const CLOTHING_INTERVAL_MS = 1800;
 
 let segmenter;
 
 export async function createClothingSegmenter(onProgress) {
-  segmenter ??= await pipeline("image-segmentation", MODEL_ID, {
+  if (segmenter) return segmenter;
+  const { pipeline } = await import(TRANSFORMERS_URL);
+  segmenter = await pipeline("image-segmentation", MODEL_ID, {
     dtype: "q8",
     progress_callback: onProgress,
   });

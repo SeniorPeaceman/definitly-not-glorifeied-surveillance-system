@@ -26,9 +26,9 @@ import {
 } from "./clothing-tracking.js";
 
 // Set model limits, frame cadence, track lifetime, and per-cue repeat cooldown.
-const MAX_FACES = 20;
-const MAX_HANDS = 40;
-const MAX_POSES = 20;
+const MAX_FACES = 5;
+const MAX_HANDS = 4;
+const MAX_POSES = 5;
 const INFERENCE_INTERVAL_MS = 1000 / 12;
 const TRACK_TIMEOUT_MS = 3500;
 const CUE_COOLDOWN_MS = 1200;
@@ -248,13 +248,17 @@ function syncPlayerTimers(now) {
 async function loadClothingSegmenter() {
   if (clothingSegmenterLoaded) return;
   setStatus("Loading clothing segmentation model…");
-  await createClothingSegmenter((progress) => {
-    if (progress?.status === "progress" && Number.isFinite(progress.progress)) {
-      setStatus(`Loading clothing model: ${Math.round(progress.progress)}%`);
-    }
-  });
-  clothingSegmenterLoaded = true;
-  setStatus("Camera live. Clothing detection is ready.");
+  try {
+    await createClothingSegmenter((progress) => {
+      if (progress?.status === "progress" && Number.isFinite(progress.progress)) {
+        setStatus(`Loading clothing model: ${Math.round(progress.progress)}%`);
+      }
+    });
+    clothingSegmenterLoaded = true;
+    setStatus("Camera live. Clothing detection is ready.");
+  } catch (error) {
+    setStatus(`Camera live. Clothing detection unavailable: ${error.message}`);
+  }
 }
 
 async function runClothingInference(now) {
