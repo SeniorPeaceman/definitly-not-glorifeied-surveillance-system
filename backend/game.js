@@ -21,10 +21,10 @@ import {
 } from "./pose-tracking.js";
 
 // Set model limits, frame cadence, track lifetime, and per-cue repeat cooldown.
-const MAX_FACES = 5;
-const MAX_HANDS = 4;
-const MAX_POSES = 5;
-const INFERENCE_INTERVAL_MS = 1000 / 8;
+const MAX_FACES = 20;
+const MAX_HANDS = 40;
+const MAX_POSES = 20;
+const INFERENCE_INTERVAL_MS = 1000 / 12;
 const TRACK_TIMEOUT_MS = 3500;
 const CUE_COOLDOWN_MS = 1200;
 const STORAGE_KEY = "definitly-not-glorified-surveillance-system-v1";
@@ -41,8 +41,6 @@ const CUES = [
   { id: "lowered-brows", label: "Lowered brows", input: "points-lowered-brows" },
   { id: "both-arms-raised", label: "Both arms raised", input: "points-both-arms-raised" },
   { id: "arms-spread", label: "Arms spread", input: "points-arms-spread" },
-  { id: "yellow-jacket", label: "Yellow jacket", input: "points-yellow-jacket" },
-  { id: "blue-tshirt", label: "Blue T-shirt", input: "points-blue-tshirt" },
 ];
 const cueById = new Map(CUES.map((cue) => [cue.id, cue]));
 
@@ -106,15 +104,7 @@ let poseLandmarker;
 let cameraStream;
 let animationFrameId;
 let lastInferenceAt = 0;
-let lastClothingInferenceAt = -Infinity;
-let clothingInferenceRunning = false;
-let clothingSegmenterLoaded = false;
-let clothingCuesByPlayer = new Map();
 const poseTracks = new Map();
-const clothingCanvas = document.createElement("canvas");
-const clothingContext = clothingCanvas.getContext("2d", { willReadFrequently: true });
-let clothingModule = null;
-let clothingEnabled = false;
 
 // Cache the controls and output elements used by the game page.
 const startButton = document.querySelector("#start-button");
@@ -127,7 +117,6 @@ const overlayContext = overlay.getContext("2d");
 const faceCount = document.querySelector("#face-count");
 const handCount = document.querySelector("#hand-count");
 const poseCount = document.querySelector("#pose-count");
-const clothingCount = document.querySelector("#clothing-count");
 const scoreList = document.querySelector("#score-list");
 const drawingUtils = new DrawingUtils(overlayContext);
 
@@ -148,7 +137,6 @@ function saveGame() {
         CUES.map(({ id, input }) => [id, Number(document.querySelector(`#${input}`).value)]),
       ),
       playerTimerSeconds: getPlayerTimerSeconds(),
-      clothingEnabled: isClothingEnabled(),
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(savedData));
     localStorage.removeItem(LEGACY_STORAGE_KEY);
@@ -240,54 +228,6 @@ function syncPlayerTimers(now) {
       track.timerDurationMs = durationMs;
       track.timerEndsAt = now + durationMs;
     }
-  }
-}
-
-function isClothingEnabled() {
-  const checkbox = document.querySelector("#enable-clothing-detection");
-  return checkbox?.checked === true;
-}
-
-async function loadClothingSegmenter() {
-  if (!clothingEnabled || clothingSegmenterLoaded) return;
-  setStatus("Loading clothing segmentation model…");
-  try {
-    clothingModule ??= await import("./clothing-tracking.js");
-    await clothingModule.createClothingSegmenter((progress) => {
-      if (progress?.status === "progress" && Number.isFinite(progress.progress)) {
-        setStatus(`Loading clothing model: ${Math.round(progress.progress)}%`);
-      }
-    });
-    clothingSegmenterLoaded = true;
-    setStatus("Camera live. Clothing detection is ready.");
-  } catch (error) {
-    setStatus(`Camera live. Clothing detection unavailable: ${error.message}`);
-  }
-}
-
-async function runClothingInference(now) {
-  if (
-    !clothingEnabled
-    || !clothingSegmenterLoaded
-    || !clothingModule
-    || clothingInferenceRunning
-    || now - lastClothingInferenceAt < clothingModule.getClothingIntervalMs()
-  ) return;
-
-  clothingInferenceRunning = true;
-  lastClothingInferenceAt = now;
-  try {
-    clothingCuesByPlayer = await clothingModule.classifyClothing(
-      video,
-      poseTracks,
-      clothingCanvas,
-      clothingContext,
-    );
-  } catch (error) {
-    clothingCuesByPlayer = new Map();
-    setStatus(`Clothing detection paused: ${error.message}`);
-  } finally {
-    clothingInferenceRunning = false;
   }
 }
 
@@ -584,10 +524,6 @@ function collectCueEvents(faceResult, handResult, poseResult, facePlayerIds, pla
     return { id: track.id, landmarks: pose };
   });
 
-  for (const [playerId, clothingCues] of clothingCuesByPlayer) {
-    for (const cue of clothingCues) addCue(playerId, cue);
-  }
-
   for (const hand of handResult.landmarks) {
     let cue = classifyGesture(hand);
     if (!cue) continue;
@@ -707,16 +643,9 @@ function detectFrame() {
     );
     const playerFrames = getPosePlayerFrames(poseResult.landmarks, playerTracks, now);
 
-    void runClothingInference(now);
-
     faceCount.value = String(faceResult.faceLandmarks.length);
     handCount.value = String(handResult.landmarks.length);
     poseCount.value = String(poseResult.landmarks.length);
-    const activeClothingCues = [...clothingCuesByPlayer.values()].reduce(
-      (total, cues) => total + cues.size,
-      0,
-    );
-    if (clothingCount) clothingCount.value = String(activeClothingCues);
     scoreCueEvents(cuesByPlayer, now);
 
     drawFaceMesh(faceResult, video, overlay, overlayContext, drawingUtils);
@@ -766,7 +695,6 @@ async function startCamera() {
 
     stopButton.disabled = false;
     lastInferenceAt = 0;
-    if (clothingEnabled) void loadClothingSegmenter();
     setStatus("Camera live. Points and player numbers are saved on this device only.");
     animationFrameId = requestAnimationFrame(detectFrame);
   } catch (error) {
@@ -787,8 +715,6 @@ function stopCamera(message = "Camera off. Scores stay saved on this device.") {
   video.srcObject = null;
   overlayContext.clearRect(0, 0, overlay.width, overlay.height);
   poseTracks.clear();
-  clothingCuesByPlayer = new Map();
-  if (clothingCount) clothingCount.value = "0";
   faceCount.value = "0";
   handCount.value = "0";
   poseCount.value = "0";
@@ -818,27 +744,12 @@ function deleteSavedData() {
 
 const timerMinutesInput = document.querySelector("#player-timer-minutes");
 const timerSecondsInput = document.querySelector("#player-timer-seconds");
-const clothingEnabledInput = document.querySelector("#enable-clothing-detection");
 const savedTimerSeconds = savedGame.settings.playerTimerSeconds;
-const savedClothingEnabled = savedGame.settings.clothingEnabled;
-if (typeof savedClothingEnabled === "boolean") {
-  clothingEnabledInput.checked = savedClothingEnabled;
-  clothingEnabled = savedClothingEnabled;
-}
-
 if (Number.isFinite(savedTimerSeconds)) {
   const safeSeconds = Math.max(5, Math.min(3600, savedTimerSeconds));
   timerMinutesInput.value = String(Math.floor(safeSeconds / 60));
   timerSecondsInput.value = String(safeSeconds % 60);
 }
-
-clothingEnabledInput.addEventListener("change", () => {
-  clothingEnabled = clothingEnabledInput.checked;
-  lastClothingInferenceAt = -Infinity;
-  clothingCuesByPlayer = new Map();
-  if (clothingEnabled && cameraStream) void loadClothingSegmenter();
-  updatePointControls();
-});
 
 for (const timerInput of [timerMinutesInput, timerSecondsInput]) {
   timerInput.addEventListener("input", () => updatePointControls());
