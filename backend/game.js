@@ -19,6 +19,11 @@ import {
   createPoseLandmarker,
   drawPoses,
 } from "./pose-tracking.js";
+import {
+  classifyClothing,
+  createClothingSegmenter,
+  getClothingIntervalMs,
+} from "./clothing-tracking.js";
 
 // Set model limits, frame cadence, track lifetime, and per-cue repeat cooldown.
 const MAX_FACES = 20;
@@ -41,6 +46,8 @@ const CUES = [
   { id: "lowered-brows", label: "Lowered brows", input: "points-lowered-brows" },
   { id: "both-arms-raised", label: "Both arms raised", input: "points-both-arms-raised" },
   { id: "arms-spread", label: "Arms spread", input: "points-arms-spread" },
+  { id: "yellow-jacket", label: "Yellow jacket", input: "points-yellow-jacket" },
+  { id: "blue-tshirt", label: "Blue T-shirt", input: "points-blue-tshirt" },
 ];
 const cueById = new Map(CUES.map((cue) => [cue.id, cue]));
 
@@ -104,7 +111,13 @@ let poseLandmarker;
 let cameraStream;
 let animationFrameId;
 let lastInferenceAt = 0;
+let lastClothingInferenceAt = -Infinity;
+let clothingInferenceRunning = false;
+let clothingSegmenterLoaded = false;
+let clothingCuesByPlayer = new Map();
 const poseTracks = new Map();
+const clothingCanvas = document.createElement("canvas");
+const clothingContext = clothingCanvas.getContext("2d", { willReadFrequently: true });
 
 // Cache the controls and output elements used by the game page.
 const startButton = document.querySelector("#start-button");
@@ -117,6 +130,7 @@ const overlayContext = overlay.getContext("2d");
 const faceCount = document.querySelector("#face-count");
 const handCount = document.querySelector("#hand-count");
 const poseCount = document.querySelector("#pose-count");
+const clothingCount = document.querySelector("#clothing-count");
 const scoreList = document.querySelector("#score-list");
 const drawingUtils = new DrawingUtils(overlayContext);
 
@@ -228,6 +242,42 @@ function syncPlayerTimers(now) {
       track.timerDurationMs = durationMs;
       track.timerEndsAt = now + durationMs;
     }
+  }
+}
+
+async function loadClothingSegmenter() {
+  if (clothingSegmenterLoaded) return;
+  setStatus("Loading clothing segmentation model…");
+  await createClothingSegmenter((progress) => {
+    if (progress?.status === "progress" && Number.isFinite(progress.progress)) {
+      setStatus(`Loading clothing model: ${Math.round(progress.progress)}%`);
+    }
+  });
+  clothingSegmenterLoaded = true;
+  setStatus("Camera live. Clothing detection is ready.");
+}
+
+async function runClothingInference(now) {
+  if (
+    !clothingSegmenterLoaded
+    || clothingInferenceRunning
+    || now - lastClothingInferenceAt < getClothingIntervalMs()
+  ) return;
+
+  clothingInferenceRunning = true;
+  lastClothingInferenceAt = now;
+  try {
+    clothingCuesByPlayer = await classifyClothing(
+      video,
+      poseTracks,
+      clothingCanvas,
+      clothingContext,
+    );
+  } catch (error) {
+    clothingCuesByPlayer = new Map();
+    setStatus(`Clothing detection paused: ${error.message}`);
+  } finally {
+    clothingInferenceRunning = false;
   }
 }
 
@@ -524,6 +574,10 @@ function collectCueEvents(faceResult, handResult, poseResult, facePlayerIds, pla
     return { id: track.id, landmarks: pose };
   });
 
+  for (const [playerId, clothingCues] of clothingCuesByPlayer) {
+    for (const cue of clothingCues) addCue(playerId, cue);
+  }
+
   for (const hand of handResult.landmarks) {
     let cue = classifyGesture(hand);
     if (!cue) continue;
@@ -643,9 +697,16 @@ function detectFrame() {
     );
     const playerFrames = getPosePlayerFrames(poseResult.landmarks, playerTracks, now);
 
+    void runClothingInference(now);
+
     faceCount.value = String(faceResult.faceLandmarks.length);
     handCount.value = String(handResult.landmarks.length);
     poseCount.value = String(poseResult.landmarks.length);
+    const activeClothingCues = [...clothingCuesByPlayer.values()].reduce(
+      (total, cues) => total + cues.size,
+      0,
+    );
+    if (clothingCount) clothingCount.value = String(activeClothingCues);
     scoreCueEvents(cuesByPlayer, now);
 
     drawFaceMesh(faceResult, video, overlay, overlayContext, drawingUtils);
@@ -695,6 +756,7 @@ async function startCamera() {
 
     stopButton.disabled = false;
     lastInferenceAt = 0;
+    void loadClothingSegmenter();
     setStatus("Camera live. Points and player numbers are saved on this device only.");
     animationFrameId = requestAnimationFrame(detectFrame);
   } catch (error) {
@@ -715,6 +777,8 @@ function stopCamera(message = "Camera off. Scores stay saved on this device.") {
   video.srcObject = null;
   overlayContext.clearRect(0, 0, overlay.width, overlay.height);
   poseTracks.clear();
+  clothingCuesByPlayer = new Map();
+  if (clothingCount) clothingCount.value = "0";
   faceCount.value = "0";
   handCount.value = "0";
   poseCount.value = "0";
