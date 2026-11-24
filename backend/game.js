@@ -193,8 +193,11 @@ function updateScoreboard() {
 }
 
 function getPlayerTimerSeconds() {
-  const input = document.querySelector("#player-timer");
-  return input ? Math.max(5, Number(input.value) || 300) : 300;
+  const minutesInput = document.querySelector("#player-timer-minutes");
+  const secondsInput = document.querySelector("#player-timer-seconds");
+  const minutes = Math.max(0, Math.min(60, Number(minutesInput?.value) || 0));
+  const seconds = Math.max(0, Math.min(59, Number(secondsInput?.value) || 0));
+  return Math.max(5, minutes * 60 + seconds);
 }
 
 function formatTimer(seconds) {
@@ -211,10 +214,9 @@ function updatePointControls(save = true) {
     const output = document.querySelector(`#${cue.input}-value`);
     output.value = `+${input.value}`;
   }
-  const timerInput = document.querySelector("#player-timer");
   const timerOutput = document.querySelector("#player-timer-value");
-  if (timerInput && timerOutput) {
-    timerOutput.value = formatTimer(Number(timerInput.value));
+  if (timerOutput) {
+    timerOutput.value = formatTimer(getPlayerTimerSeconds());
   }
   if (save) saveGame();
 }
@@ -740,19 +742,26 @@ function deleteSavedData() {
   }
 }
 
-const timerInput = document.querySelector("#player-timer");
+const timerMinutesInput = document.querySelector("#player-timer-minutes");
+const timerSecondsInput = document.querySelector("#player-timer-seconds");
 const savedTimerSeconds = savedGame.settings.playerTimerSeconds;
 if (Number.isFinite(savedTimerSeconds)) {
-  timerInput.value = String(Math.max(5, Math.min(3600, savedTimerSeconds)));
+  const safeSeconds = Math.max(5, Math.min(3600, savedTimerSeconds));
+  timerMinutesInput.value = String(Math.floor(safeSeconds / 60));
+  timerSecondsInput.value = String(safeSeconds % 60);
 }
-timerInput.addEventListener("input", () => {
-  updatePointControls();
-  for (const track of poseTracks.values()) {
+
+for (const timerInput of [timerMinutesInput, timerSecondsInput]) {
+  timerInput.addEventListener("input", () => updatePointControls());
+  timerInput.addEventListener("change", () => {
     const durationMs = getPlayerTimerSeconds() * 1000;
-    track.timerDurationMs = durationMs;
-    track.timerEndsAt = performance.now() + durationMs;
-  }
-});
+    for (const track of poseTracks.values()) {
+      track.timerDurationMs = durationMs;
+      track.timerEndsAt = performance.now() + durationMs;
+    }
+    updatePointControls();
+  });
+}
 
 // Restore saved slider choices when present; defaults remain unsaved on initial load.
 for (const cue of CUES) {

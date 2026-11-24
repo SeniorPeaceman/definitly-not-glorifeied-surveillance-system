@@ -37,7 +37,12 @@
       <!-- Timer and cue sliders configure the live game. -->
       <section>
         <h2>Player timer</h2>
-        <p><label for="player-timer">Duration</label> <input id="player-timer" type="range" min="5" max="3600" step="5" value="300"> <output id="player-timer-value" for="player-timer">05:00</output></p>
+        <p class="timer-controls">
+          <label for="player-timer-minutes">Minutes <input id="player-timer-minutes" type="number" min="0" max="60" step="1" value="5"></label>
+          <span aria-hidden="true">:</span>
+          <label for="player-timer-seconds">Seconds <input id="player-timer-seconds" type="number" min="0" max="59" step="1" value="0"></label>
+          <output id="player-timer-value" for="player-timer-minutes player-timer-seconds">05:00</output>
+        </p>
 
         <h2>Points per cue</h2>
         <p><label for="points-fist">Fist</label> <input id="points-fist" type="range" min="0" max="10" step="1" value="2"> <output id="points-fist-value" for="points-fist">+2</output></p>

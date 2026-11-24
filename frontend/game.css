@@ -21,3 +21,27 @@
   pointer-events: none;
   transform: scaleX(-1);
 }
+
+.timer-controls {
+  display: flex;
+  align-items: end;
+  gap: 8px;
+}
+
+.timer-controls label {
+  display: grid;
+  gap: 4px;
+}
+
+.timer-controls input {
+  width: 72px;
+  min-height: 36px;
+  box-sizing: border-box;
+}
+
+.timer-controls output {
+  align-self: center;
+  min-width: 64px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}

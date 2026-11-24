@@ -67,7 +67,7 @@ export function drawFaceMesh(result, video, canvas, context, drawingUtils) {
     drawingUtils.drawConnectors(
       landmarks,
       FaceLandmarker.FACE_LANDMARKS_TESSELATION,
-      { color: "#00ff00", lineWidth: 0.5 },
+      { color: "#ff6b4a", lineWidth: 1 },
     );
   }
 }
@@ -87,9 +87,9 @@ export function drawPlayerFrames(playerFrames, video, canvas, context) {
     const height = (frame.bounds.bottom - frame.bounds.top) * canvas.height;
 
     context.save();
-    context.strokeStyle = frame.covered ? "#58e0bd" : "#ff6b4a";
+    context.strokeStyle = "#ff6b4a";
     context.lineWidth = Math.max(2, canvas.width / 320);
-    context.setLineDash(frame.covered ? [8, 5] : []);
+    context.setLineDash([]);
     context.strokeRect(left, top, width, height);
 
     const timerSeconds = frame.remainingMs / 1000;
@@ -101,7 +101,7 @@ export function drawPlayerFrames(playerFrames, video, canvas, context) {
     context.font = `700 ${fontSize}px monospace`;
     context.textBaseline = "middle";
     const labelWidth = context.measureText(label).width + 16;
-    context.fillStyle = frame.covered ? "#58e0bd" : "#ff6b4a";
+    context.fillStyle = "#ff6b4a";
     context.fillRect(left, labelTop, labelWidth, fontSize + 8);
     context.fillStyle = "#17251e";
     const textLeft = left + 8;

@@ -53,11 +53,11 @@ export function classifyPose(landmarks) {
 export function drawPoses(result, drawingUtils) {
   for (const landmarks of result.landmarks) {
     drawingUtils.drawConnectors(landmarks, PoseLandmarker.POSE_CONNECTIONS, {
-      color: "#58e0bd",
+      color: "#ff6b4a",
       lineWidth: 3,
     });
     drawingUtils.drawLandmarks(landmarks, {
-      color: "#ffca58",
+      color: "#ff6b4a",
       lineWidth: 1,
       radius: 3,
     });
