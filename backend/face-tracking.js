@@ -92,7 +92,9 @@ export function drawPlayerFrames(playerFrames, video, canvas, context) {
     context.setLineDash(frame.covered ? [8, 5] : []);
     context.strokeRect(left, top, width, height);
 
-    const label = `PLAYER ${frame.playerId}`;
+    const timerSeconds = frame.remainingMs / 1000;
+    const timerText = `${String(Math.floor(Math.max(0, timerSeconds) / 60)).padStart(2, "0")}:${String(Math.max(0, Math.ceil(timerSeconds) % 60)).padStart(2, "0")}`;
+    const label = `PLAYER ${frame.playerId} | ${timerText}`;
     const fontSize = Math.max(14, canvas.width / 34);
     const labelTop = Math.max(0, top - fontSize - 10);
     context.setLineDash([]);

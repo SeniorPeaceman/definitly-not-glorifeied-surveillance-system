@@ -34,8 +34,11 @@
         <button id="delete-saved-data-button" type="button">Delete saved data</button>
       </section>
 
-      <!-- Each slider ID is read by game.js as the score for its matching cue. -->
+      <!-- Timer and cue sliders configure the live game. -->
       <section>
+        <h2>Player timer</h2>
+        <p><label for="player-timer">Duration</label> <input id="player-timer" type="range" min="5" max="3600" step="5" value="300"> <output id="player-timer-value" for="player-timer">05:00</output></p>
+
         <h2>Points per cue</h2>
         <p><label for="points-fist">Fist</label> <input id="points-fist" type="range" min="0" max="10" step="1" value="2"> <output id="points-fist-value" for="points-fist">+2</output></p>
         <p><label for="points-raised-fist">Raised fist</label> <input id="points-raised-fist" type="range" min="0" max="10" step="1" value="3"> <output id="points-raised-fist-value" for="points-raised-fist">+3</output></p>

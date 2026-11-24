@@ -132,9 +132,12 @@ function saveGame() {
   try {
     const savedPlayerScores = [...playerScores.values()];
     const savedData = { nextPlayerId, playerScores: savedPlayerScores, unassignedScores };
-    savedData.settings = Object.fromEntries(
-      CUES.map(({ id, input }) => [id, Number(document.querySelector(`#${input}`).value)]),
-    );
+    savedData.settings = {
+      ...Object.fromEntries(
+        CUES.map(({ id, input }) => [id, Number(document.querySelector(`#${input}`).value)]),
+      ),
+      playerTimerSeconds: getPlayerTimerSeconds(),
+    };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(savedData));
     localStorage.removeItem(LEGACY_STORAGE_KEY);
   } catch {
@@ -189,6 +192,18 @@ function updateScoreboard() {
   }
 }
 
+function getPlayerTimerSeconds() {
+  const input = document.querySelector("#player-timer");
+  return input ? Math.max(5, Number(input.value) || 300) : 300;
+}
+
+function formatTimer(seconds) {
+  const wholeSeconds = Math.max(0, Math.ceil(seconds));
+  const minutes = Math.floor(wholeSeconds / 60);
+  const remainder = wholeSeconds % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(remainder).padStart(2, "0")}`;
+}
+
 // Mirror slider values in their outputs and optionally persist the settings.
 function updatePointControls(save = true) {
   for (const cue of CUES) {
@@ -196,7 +211,22 @@ function updatePointControls(save = true) {
     const output = document.querySelector(`#${cue.input}-value`);
     output.value = `+${input.value}`;
   }
+  const timerInput = document.querySelector("#player-timer");
+  const timerOutput = document.querySelector("#player-timer-value");
+  if (timerInput && timerOutput) {
+    timerOutput.value = formatTimer(Number(timerInput.value));
+  }
   if (save) saveGame();
+}
+
+function syncPlayerTimers(now) {
+  const durationMs = getPlayerTimerSeconds() * 1000;
+  for (const track of poseTracks.values()) {
+    if (track.timerDurationMs !== durationMs) {
+      track.timerDurationMs = durationMs;
+      track.timerEndsAt = now + durationMs;
+    }
+  }
 }
 
 // Find the lowest-cost one-to-one column for every detection using the Hungarian method.
@@ -367,6 +397,8 @@ function matchPoses(poseLandmarks, now) {
       lastSeen: now,
       cueStates: new Map(),
       lastAwardAt: new Map(),
+      timerDurationMs: getPlayerTimerSeconds() * 1000,
+      timerEndsAt: now + getPlayerTimerSeconds() * 1000,
     };
     poseTracks.set(newTrack.id, newTrack);
     ensurePlayerScore(newTrack.id);
@@ -400,7 +432,7 @@ function matchFacesToPlayers(faceLandmarks, poseLandmarks, tracks) {
   });
 }
 
-function getPosePlayerFrames(poseLandmarks, playerTracks) {
+function getPosePlayerFrames(poseLandmarks, playerTracks, now) {
   return poseLandmarks.map((pose, index) => {
     const track = playerTracks[index];
     if (!track) return undefined;
@@ -410,6 +442,7 @@ function getPosePlayerFrames(poseLandmarks, playerTracks) {
       const padding = Math.max(bounds.width, bounds.height) * 0.05;
       return {
         playerId: track.id,
+        remainingMs: Math.max(0, track.timerEndsAt - now),
         covered: false,
         bounds: {
           left: bounds.left - padding,
@@ -432,6 +465,7 @@ function getPosePlayerFrames(poseLandmarks, playerTracks) {
     const height = width * 1.25;
     return {
       playerId: track.id,
+      remainingMs: Math.max(0, track.timerEndsAt - now),
       covered: true,
       bounds: {
         left: Math.max(0, head.x - width / 2),
@@ -591,6 +625,7 @@ function detectFrame() {
     const faceResult = faceLandmarker.detectForVideo(video, now);
     const handResult = handLandmarker.detectForVideo(video, now);
     const poseResult = poseLandmarker.detectForVideo(video, now);
+    syncPlayerTimers(now);
     const playerTracks = matchPoses(poseResult.landmarks, now);
     const facePlayerIds = matchFacesToPlayers(
       faceResult.faceLandmarks,
@@ -604,7 +639,7 @@ function detectFrame() {
       facePlayerIds,
       playerTracks,
     );
-    const playerFrames = getPosePlayerFrames(poseResult.landmarks, playerTracks);
+    const playerFrames = getPosePlayerFrames(poseResult.landmarks, playerTracks, now);
 
     faceCount.value = String(faceResult.faceLandmarks.length);
     handCount.value = String(handResult.landmarks.length);
@@ -704,6 +739,20 @@ function deleteSavedData() {
     setStatus("Could not delete saved data from browser storage.");
   }
 }
+
+const timerInput = document.querySelector("#player-timer");
+const savedTimerSeconds = savedGame.settings.playerTimerSeconds;
+if (Number.isFinite(savedTimerSeconds)) {
+  timerInput.value = String(Math.max(5, Math.min(3600, savedTimerSeconds)));
+}
+timerInput.addEventListener("input", () => {
+  updatePointControls();
+  for (const track of poseTracks.values()) {
+    const durationMs = getPlayerTimerSeconds() * 1000;
+    track.timerDurationMs = durationMs;
+    track.timerEndsAt = performance.now() + durationMs;
+  }
+});
 
 // Restore saved slider choices when present; defaults remain unsaved on initial load.
 for (const cue of CUES) {
