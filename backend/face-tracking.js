@@ -55,49 +55,55 @@ export function getFaceBounds(landmarks) {
   };
 }
 
-// Draw the face mesh, track box, and readable ID label onto the mirrored video overlay.
-export function drawFaceMesh(result, video, canvas, context, drawingUtils, playerIds = []) {
+// Draw only the face mesh onto the mirrored video overlay.
+export function drawFaceMesh(result, video, canvas, context, drawingUtils) {
   if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
   }
   context.clearRect(0, 0, canvas.width, canvas.height);
 
-  for (const [index, landmarks] of result.faceLandmarks.entries()) {
+  for (const landmarks of result.faceLandmarks) {
     drawingUtils.drawConnectors(
       landmarks,
       FaceLandmarker.FACE_LANDMARKS_TESSELATION,
       { color: "#00ff00", lineWidth: 0.5 },
     );
+  }
+}
 
-    const bounds = getFaceBounds(landmarks);
-    const left = bounds.left * canvas.width;
-    const top = bounds.top * canvas.height;
-    const right = bounds.right * canvas.width;
-    const bottom = bounds.bottom * canvas.height;
-    const padding = Math.max(right - left, bottom - top) * 0.05;
+// Draw one pose-owned player frame per track, including frames for covered faces.
+export function drawPlayerFrames(playerFrames, video, canvas, context) {
+  if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+  }
 
-    context.strokeStyle = "#ff6b4a";
+  for (const frame of playerFrames) {
+    if (!frame?.bounds) continue;
+    const left = frame.bounds.left * canvas.width;
+    const top = frame.bounds.top * canvas.height;
+    const width = (frame.bounds.right - frame.bounds.left) * canvas.width;
+    const height = (frame.bounds.bottom - frame.bounds.top) * canvas.height;
+
+    context.save();
+    context.strokeStyle = frame.covered ? "#58e0bd" : "#ff6b4a";
     context.lineWidth = Math.max(2, canvas.width / 320);
-    context.strokeRect(
-      left - padding,
-      top - padding,
-      right - left + padding * 2,
-      bottom - top + padding * 2,
-    );
+    context.setLineDash(frame.covered ? [8, 5] : []);
+    context.strokeRect(left, top, width, height);
 
-    const label = `PLAYER ${playerIds[index] ?? "?"}`;
+    const label = `PLAYER ${frame.playerId}`;
     const fontSize = Math.max(14, canvas.width / 34);
-    const labelTop = Math.max(0, top - padding - fontSize - 10);
+    const labelTop = Math.max(0, top - fontSize - 10);
+    context.setLineDash([]);
     context.font = `700 ${fontSize}px monospace`;
     context.textBaseline = "middle";
     const labelWidth = context.measureText(label).width + 16;
-    context.fillStyle = "#ff6b4a";
-    context.fillRect(left - padding, labelTop, labelWidth, fontSize + 8);
+    context.fillStyle = frame.covered ? "#58e0bd" : "#ff6b4a";
+    context.fillRect(left, labelTop, labelWidth, fontSize + 8);
     context.fillStyle = "#17251e";
-    const textLeft = left - padding + 8;
+    const textLeft = left + 8;
     const textWidth = context.measureText(label).width;
-    context.save();
     context.translate(textLeft * 2 + textWidth, 0);
     context.scale(-1, 1);
     context.fillText(label, textLeft, labelTop + (fontSize + 8) / 2);

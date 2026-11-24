@@ -6,6 +6,7 @@ import {
   classifyFace,
   createFaceLandmarker,
   drawFaceMesh,
+  drawPlayerFrames,
   getFaceBounds,
 } from "./face-tracking.js";
 import {
@@ -375,6 +376,7 @@ function matchPoses(poseLandmarks, now) {
 }
 
 function matchFacesToPlayers(faceLandmarks, poseLandmarks, tracks) {
+  for (const track of tracks.filter(Boolean)) track.activeFaceBounds = undefined;
   const maxDistance = 0.3;
   const invalidCost = 100;
   const costMatrix = faceLandmarks.map((face) => {
@@ -388,11 +390,57 @@ function matchFacesToPlayers(faceLandmarks, poseLandmarks, tracks) {
     return [...poseCosts, ...new Array(faceLandmarks.length).fill(maxDistance)];
   });
   const assignments = assignMinimumCostPairs(costMatrix);
-  return assignments.map((poseIndex, faceIndex) =>
-    poseIndex >= 0 && poseIndex < tracks.length && costMatrix[faceIndex][poseIndex] < maxDistance
-      ? tracks[poseIndex].id
-      : undefined,
-  );
+  return assignments.map((poseIndex, faceIndex) => {
+    if (poseIndex >= 0 && poseIndex < tracks.length && costMatrix[faceIndex][poseIndex] < maxDistance) {
+      const track = tracks[poseIndex];
+      track.activeFaceBounds = getFaceBounds(faceLandmarks[faceIndex]);
+      return track.id;
+    }
+    return undefined;
+  });
+}
+
+function getPosePlayerFrames(poseLandmarks, playerTracks) {
+  return poseLandmarks.map((pose, index) => {
+    const track = playerTracks[index];
+    if (!track) return undefined;
+
+    if (track.activeFaceBounds) {
+      const bounds = track.activeFaceBounds;
+      const padding = Math.max(bounds.width, bounds.height) * 0.05;
+      return {
+        playerId: track.id,
+        covered: false,
+        bounds: {
+          left: bounds.left - padding,
+          top: bounds.top - padding,
+          right: bounds.right + padding,
+          bottom: bounds.bottom + padding,
+        },
+      };
+    }
+
+    const head = poseHead(pose);
+    if (!head) return undefined;
+    const leftShoulder = pose[11];
+    const rightShoulder = pose[12];
+    let width = track.width * 1.15;
+    if (leftShoulder && rightShoulder) {
+      width = Math.max(width, Math.abs(rightShoulder.x - leftShoulder.x) * 1.25);
+    }
+    width = Math.max(0.12, width);
+    const height = width * 1.25;
+    return {
+      playerId: track.id,
+      covered: true,
+      bounds: {
+        left: Math.max(0, head.x - width / 2),
+        top: Math.max(0, head.y - height * 0.55),
+        right: Math.min(1, head.x + width / 2),
+        bottom: Math.min(1, head.y + height * 0.45),
+      },
+    };
+  }).filter(Boolean);
 }
 
 function closestMappedPlayerId(point, faceLandmarks, facePlayerIds, maxDistance) {
@@ -556,13 +604,15 @@ function detectFrame() {
       facePlayerIds,
       playerTracks,
     );
+    const playerFrames = getPosePlayerFrames(poseResult.landmarks, playerTracks);
 
     faceCount.value = String(faceResult.faceLandmarks.length);
     handCount.value = String(handResult.landmarks.length);
     poseCount.value = String(poseResult.landmarks.length);
     scoreCueEvents(cuesByPlayer, now);
 
-    drawFaceMesh(faceResult, video, overlay, overlayContext, drawingUtils, facePlayerIds);
+    drawFaceMesh(faceResult, video, overlay, overlayContext, drawingUtils);
+    drawPlayerFrames(playerFrames, video, overlay, overlayContext);
     drawPoses(poseResult, drawingUtils);
     drawHands(handResult, drawingUtils);
     updateScoreboard();
