@@ -1,6 +1,6 @@
 const TRANSFORMERS_URL = "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.3/dist/transformers.min.js";
 const MODEL_ID = "Xenova/segformer_b2_clothes";
-const CLOTHING_INTERVAL_MS = 1800;
+const CLOTHING_INTERVAL_MS = 6000;
 
 let segmenter;
 
@@ -57,9 +57,11 @@ function isBlue(r, g, b) {
 export async function classifyClothing(video, poseTracks, canvas, context) {
   if (!segmenter) throw new Error("Clothing segmenter is not loaded.");
 
-  if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
+  const canvasWidth = Math.min(320, video.videoWidth || 320);
+  const canvasHeight = Math.round(canvasWidth * ((video.videoHeight || 240) / (video.videoWidth || 320)));
+  if (canvas.width !== canvasWidth || canvas.height !== canvasHeight) {
+    canvas.width = canvasWidth;
+    canvas.height = canvasHeight;
   }
   context.drawImage(video, 0, 0, canvas.width, canvas.height);
 
