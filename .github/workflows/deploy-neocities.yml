@@ -42,4 +42,5 @@ jobs:
             -F "face-tracking.js=@backend/face-tracking.js" \
             -F "hand-tracking.js=@backend/hand-tracking.js" \
             -F "pose-tracking.js=@backend/pose-tracking.js" \
+            -F "clothing-tracking.js=@backend/clothing-tracking.js" \
             https://neocities.org/api/upload

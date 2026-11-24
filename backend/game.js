@@ -19,11 +19,6 @@ import {
   createPoseLandmarker,
   drawPoses,
 } from "./pose-tracking.js";
-import {
-  classifyClothing,
-  createClothingSegmenter,
-  getClothingIntervalMs,
-} from "./clothing-tracking.js";
 
 // Set model limits, frame cadence, track lifetime, and per-cue repeat cooldown.
 const MAX_FACES = 5;
@@ -118,6 +113,7 @@ let clothingCuesByPlayer = new Map();
 const poseTracks = new Map();
 const clothingCanvas = document.createElement("canvas");
 const clothingContext = clothingCanvas.getContext("2d", { willReadFrequently: true });
+let clothingModule = null;
 
 // Cache the controls and output elements used by the game page.
 const startButton = document.querySelector("#start-button");
@@ -249,7 +245,8 @@ async function loadClothingSegmenter() {
   if (clothingSegmenterLoaded) return;
   setStatus("Loading clothing segmentation model…");
   try {
-    await createClothingSegmenter((progress) => {
+    clothingModule ??= await import("./clothing-tracking.js");
+    await clothingModule.createClothingSegmenter((progress) => {
       if (progress?.status === "progress" && Number.isFinite(progress.progress)) {
         setStatus(`Loading clothing model: ${Math.round(progress.progress)}%`);
       }
@@ -264,14 +261,15 @@ async function loadClothingSegmenter() {
 async function runClothingInference(now) {
   if (
     !clothingSegmenterLoaded
+    || !clothingModule
     || clothingInferenceRunning
-    || now - lastClothingInferenceAt < getClothingIntervalMs()
+    || now - lastClothingInferenceAt < clothingModule.getClothingIntervalMs()
   ) return;
 
   clothingInferenceRunning = true;
   lastClothingInferenceAt = now;
   try {
-    clothingCuesByPlayer = await classifyClothing(
+    clothingCuesByPlayer = await clothingModule.classifyClothing(
       video,
       poseTracks,
       clothingCanvas,
